@@ -1,0 +1,31 @@
+LoadShare Food - Delivery Partner Guidelines
+
+Registration
+A delivery partner must register with the role delivery_partner and create a profile with phone number, vehicle type, vehicle number, city and pincode.
+Each phone number and each vehicle number can be used for only one partner account.
+
+Earnings
+A partner earns the delivery fee of every delivered order. The fee depends on the trip distance: Rs 20 for the first 2 km and Rs 7 for every extra km on food orders.
+Earnings, distance covered and delivery history are shown on the partner dashboard.
+
+Availability
+A partner is marked unavailable when an order is assigned and becomes available again when the order is Delivered or Cancelled.
+A partner can have only one active order at a time.
+The nearest available partner is assigned first.
+
+Delivery Process
+1. Collect the order from the restaurant and press Picked up from restaurant.
+2. Press Out for delivery while travelling to the customer.
+3. For Cash on Delivery orders, collect the exact amount and press Cash collected.
+4. Hand over the order and press Mark delivered.
+Statuses must be updated in this order. A status cannot be skipped.
+A Cash on Delivery order cannot be marked delivered until the cash is confirmed as collected.
+
+Conduct
+Partners must be polite and carry a valid vehicle document.
+Partners must not open or damage the order.
+Partners must not ask the customer for extra money beyond the amount shown in the app.
+
+Issues
+If the customer is not reachable or the address is wrong, contact support before cancelling.
+Repeated complaints can lead to the partner account being deactivated by the admin.

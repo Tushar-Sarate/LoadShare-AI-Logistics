@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoadShare Food - Login</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div class="auth">
+
+    <div class="auth-hero">
+      <h1>🍔 LoadShare Food</h1>
+      <p>Your favourite food, delivered in minutes.</p>
+      <p>Live GPS tracking. Fair prices. AI support.</p>
+      <p style="margin-top:24px"><a href="index.html" style="color:#fff">← Back to home</a></p>
+    </div>
+
+    <div class="auth-form">
+      <div class="auth-box">
+
+        <div class="tabs">
+          <button id="tab-login" class="on" onclick="showTab('login')">Login</button>
+          <button id="tab-register" onclick="showTab('register')">Sign up</button>
+        </div>
+
+        <div id="login-form">
+          <label>Email</label>
+          <input type="email" id="login-email" placeholder="you@example.com">
+          <label>Password</label>
+          <input type="password" id="login-password" placeholder="Password"
+                 onkeydown="if (event.key === 'Enter') login()">
+          <button class="btn full" onclick="login()">Login</button>
+        </div>
+
+        <div id="register-form" style="display:none">
+          <div class="roles">
+            <div class="role on" id="role-customer" onclick="pickRole('customer')">
+              <span>🍕</span>Order food
+            </div>
+            <div class="role" id="role-partner" onclick="pickRole('delivery_partner')">
+              <span>🛵</span>Deliver and earn
+            </div>
+          </div>
+          <label>Full name</label>
+          <input type="text" id="reg-name" placeholder="Full name">
+          <label>Email</label>
+          <input type="email" id="reg-email" placeholder="you@example.com">
+          <label>Password</label>
+          <input type="password" id="reg-password" placeholder="Min 8 characters, letter and number">
+          <button class="btn full" onclick="register()">Create account</button>
+        </div>
+
+        <p class="msg" id="msg"></p>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    let selectedRole = "customer";
+
+    if (getToken()) {
+      window.location.href = "dashboard.html";
+    }
+
+    function showTab(tab) {
+      document.getElementById("login-form").style.display = tab === "login" ? "block" : "none";
+      document.getElementById("register-form").style.display = tab === "register" ? "block" : "none";
+      document.getElementById("tab-login").className = tab === "login" ? "on" : "";
+      document.getElementById("tab-register").className = tab === "register" ? "on" : "";
+      setMsg("");
+    }
+
+    function pickRole(role) {
+      selectedRole = role;
+      document.getElementById("role-customer").className = "role" + (role === "customer" ? " on" : "");
+      document.getElementById("role-partner").className = "role" + (role === "delivery_partner" ? " on" : "");
+    }
+
+    function setMsg(text, type) {
+      const m = document.getElementById("msg");
+      m.textContent = text;
+      m.className = "msg " + (type || "");
+    }
+
+    async function doLogin(email, password) {
+      const data = await api("/auth/login", "POST", { email: email, password: password });
+      setToken(data.access_token);
+      window.location.href = "dashboard.html";
+    }
+
+    async function login() {
+      try {
+        await doLogin(
+          document.getElementById("login-email").value,
+          document.getElementById("login-password").value
+        );
+      } catch (e) {
+        setMsg(e.message, "error");
+      }
+    }
+
+    async function register() {
+      const email = document.getElementById("reg-email").value;
+      const password = document.getElementById("reg-password").value;
+      try {
+        await api("/auth/register", "POST", {
+          full_name: document.getElementById("reg-name").value,
+          email: email,
+          password: password,
+          role: selectedRole,
+        });
+        await doLogin(email, password);
+      } catch (e) {
+        setMsg(e.message, "error");
+      }
+    }
+
+    // links from the home page: login.html?tab=signup&role=delivery_partner
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "signup") {
+      showTab("register");
+      if (params.get("role") === "delivery_partner") pickRole("delivery_partner");
+    }
+  </script>
+
+</body>
+</html>

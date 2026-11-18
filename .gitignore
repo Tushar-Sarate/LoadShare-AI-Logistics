@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Testing
+.pytest_cache/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Vector database
+chroma_db/
+
+# Logs
+logs/
+
+# Local databases
+*.db

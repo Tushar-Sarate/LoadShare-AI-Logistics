@@ -1,0 +1,34 @@
+LoadShare Food - FAQ
+
+Q: How do I place an order?
+A: Register as a customer, complete your profile, choose a restaurant, add items to the cart and press Place order.
+
+Q: How is the delivery fee calculated?
+A: It depends on the distance. Rs 20 for the first 2 km, then Rs 7 for every extra km. A 5 km trip costs Rs 41. The fee is shown in your cart before you order.
+
+Q: What is the maximum delivery distance?
+A: 25 km for food orders.
+
+Q: How can I track my order?
+A: Open My orders, then press Track for the status history or Map for the route and estimated arrival time.
+
+Q: Can I cancel my order?
+A: Yes, only while the order is Pending.
+
+Q: Which payment methods are available?
+A: UPI (scan the QR code) and Cash on Delivery.
+
+Q: How does Cash on Delivery work?
+A: Choose Cash on Delivery and pay the delivery partner when the order arrives. The partner confirms the cash in the app.
+
+Q: My order is late or wrong. What should I do?
+A: Press Help on the order, or email our support. We reply with the next steps.
+
+Q: Can support cancel my order by email?
+A: Yes. If the order is still Pending, write that you want to cancel it and it is cancelled automatically.
+
+Q: How do I become a delivery partner?
+A: Register with the role delivery_partner and create your partner profile.
+
+Q: How long does a refund take?
+A: 5 to 7 working days after approval.

@@ -1,0 +1,1967 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoadShare Food</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    .stars { display: flex; gap: 6px; justify-content: center; font-size: 36px; margin: 12px 0; cursor: pointer; user-select: none; }
+    .stars span { color: #d4d5d9; }
+    .stars span.on { color: #f5a623; }
+    .rating { display: inline-block; background: #1ba672; color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; margin-right: 6px; }
+    .rating.new { background: #8a8d99; }
+    .gps-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #bbb; margin-right: 8px; }
+    .gps-dot.on { background: var(--green); box-shadow: 0 0 0 4px rgba(27, 166, 114, 0.25); }
+    .rider-icon { font-size: 28px; text-align: center; line-height: 30px; background: none; border: none; }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; }
+    .seg button { background: #fff; padding: 7px 16px; font-weight: 700; color: var(--muted); }
+    .seg button.on { background: var(--brand); color: #fff; }
+    .head-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    .head-row h2 { margin: 0; }
+    .note { background: #fff8e6; border-left: 4px solid #f5a623; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
+  </style>
+</head>
+<body>
+
+  <header class="top">
+    <span class="logo">🍔 LoadShare Food</span>
+    <span class="live" id="live">● Live</span>
+    <button class="orders-btn" id="orders-btn" style="display:none" onclick="toggleOrders()">
+      📦 My orders <b id="orders-count">0</b>
+    </button>
+    <span class="badge" id="role-badge"></span>
+    <span class="who" id="who"></span>
+    <button class="btn-ghost" onclick="logout()">Logout</button>
+  </header>
+
+  <main class="wrap" id="app"><p class="muted">Loading...</p></main>
+
+  <div id="toast"></div>
+
+  <!-- My orders side panel (customer) -->
+  <div class="drawer-bg" id="drawer-bg" onclick="toggleOrders()"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <h2>📦 My orders</h2>
+      <button class="btn-ghost" onclick="toggleOrders()">✕ Close</button>
+    </div>
+    <div class="drawer-tabs">
+      <button id="tab-active" class="on" onclick="setOrdersTab('active')">Active</button>
+      <button id="tab-past" onclick="setOrdersTab('past')">History</button>
+    </div>
+    <div class="drawer-body" id="orders"></div>
+  </aside>
+
+  <!-- Chat widget -->
+  <button class="fab" onclick="toggleChat()">💬</button>
+  <div class="chat" id="chat">
+    <div class="chat-head">LoadShare Assistant</div>
+    <div id="chat-box"></div>
+    <div class="chat-input">
+      <input type="text" id="question" placeholder="Ask about charges, orders..."
+             onkeydown="if (event.key === 'Enter') sendChat()">
+      <button class="btn" onclick="sendChat()">Send</button>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/partner_jobs.js"></script>
+  <script>
+    requireLogin();
+
+    const STEPS = ["Pending", "Assigned", "Picked Up", "In Transit", "Delivered"];
+    const FOOD_STEPS = ["Placed", "Partner assigned", "Picked up", "On the way", "Delivered"];
+    const ACTIVE_STATUSES = ["Assigned", "Picked Up", "In Transit"];
+    const STATUS_COLORS = {
+      "Pending": "#fc8019", "Assigned": "#2f6fed", "Picked Up": "#7c5cff",
+      "In Transit": "#00a3bf", "Delivered": "#1ba672", "Cancelled": "#e23744",
+    };
+    const openIds = new Set();
+    const charts = {};
+    let role = "";
+    let refreshTimer = null;
+    let refreshT = null;
+    let streamOn = false;
+    let ordersCache = [];
+    let liveMap = null;               // the customer's live map
+    let gps = { watchId: null, timer: null, last: 0 };   // the partner's GPS sharing
+
+    const el = (id) => document.getElementById(id);
+
+    function pillClass(status) {
+      if (status === "Delivered") return "done";
+      if (status === "Cancelled") return "cancel";
+      if (status === "Pending") return "pending";
+      return "active";
+    }
+
+    function money(n) {
+      return "Rs " + parseFloat(n || 0).toFixed(2);
+    }
+
+    function orderTotal(o) {
+      return parseFloat(o.delivery_charge) + parseFloat(o.items_total || 0);
+    }
+
+    function itemsText(o) {
+      if (!o.items || !o.items.length) return esc(o.package_description || "Package");
+      return o.items.map((i) => i.quantity + " x " + esc(i.item_name)).join(", ");
+    }
+
+    function isOpenOrder(o) {
+      return !["Delivered", "Cancelled"].includes(o.order_status);
+    }
+
+    function orderDate(o) {
+      return new Date(o.updated_at || o.created_at);
+    }
+
+    // Restaurant photo with emoji fallback
+    function restImg(r) {
+      const photo = r.image_url
+        ? `<img src="${esc(r.image_url)}" alt="" onerror="this.remove()">` : "";
+      return `<div class="rest-img">${esc(r.emoji || "🍽️")}${photo}</div>`;
+    }
+
+    function ratingBadge(r) {
+      return r.rating_count
+        ? `<span class="rating">★ ${r.rating}</span><span class="muted">(${r.rating_count})</span>`
+        : `<span class="rating new">New</span>`;
+    }
+
+    const kpi = (label, value, sub) =>
+      `<div class="stat"><small>${label}</small><b>${value}</b>${sub ? `<div class="muted">${sub}</div>` : ""}</div>`;
+
+    // Draw or redraw a Chart.js chart
+    function drawChart(id, config) {
+      const canvas = el(id);
+      if (!canvas || typeof Chart === "undefined") return;
+      try { if (charts[id]) charts[id].destroy(); } catch (e) { /* old canvas is gone */ }
+      charts[id] = new Chart(canvas, config);
+    }
+
+    // ---------------- Start ----------------
+    async function init() {
+      const me = await api("/auth/me");
+      role = me.role;
+      el("who").textContent = me.full_name;
+      el("role-badge").textContent = role.replace("_", " ");
+      el("app").classList.toggle("wide", role === "admin" || role === "delivery_partner");
+
+      if (role === "customer" || role === "delivery_partner") {
+        const path = role === "customer" ? "/customers/profile" : "/partners/profile";
+        try {
+          await api(path);
+        } catch (e) {
+          showProfileForm();
+          return;
+        }
+      }
+
+      if (role === "customer") renderCustomer();
+      else if (role === "delivery_partner") renderPartner();
+      else renderAdmin();
+
+      // Live updates, with slow polling as a safety net
+      clearInterval(refreshTimer);
+      refreshTimer = setInterval(refresh, 60000);
+      startStream();
+    }
+
+    function refresh() {
+      if (role === "customer") loadCustomerOrders();
+      else if (role === "delivery_partner") loadPartnerOrders();
+      else {
+        loadAdmin();
+        if (adminTab === "insights") loadInsights();
+      }
+    }
+
+    function refreshSoon() {
+      clearTimeout(refreshT);
+      refreshT = setTimeout(refresh, 400);
+    }
+
+    // ---------------- Live updates (Server-Sent Events) ----------------
+    function handleEvent(ev) {
+      // a partner moved: only update the open live map
+      if (ev.type === "location") {
+        if (liveMap && liveMap.orderId === ev.order_id) {
+          showRider({ lat: ev.lat, lng: ev.lng, km_to_drop: ev.km_to_drop, simulated: ev.simulated });
+        }
+        return;
+      }
+      refreshSoon();
+    }
+
+    async function startStream() {
+      if (streamOn) return;
+      streamOn = true;
+
+      while (getToken()) {
+        try {
+          const res = await fetch("/events/stream", {
+            headers: { Authorization: "Bearer " + getToken() },
+          });
+          if (res.status === 401) { logout(); return; }
+          if (!res.ok) throw new Error("stream " + res.status);
+
+          el("live").style.display = "inline-block";
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+
+            let idx;
+            while ((idx = buf.indexOf("\n\n")) >= 0) {
+              const chunk = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const line = chunk.split("\n").find((l) => l.startsWith("data:"));
+              if (!line) continue;
+              try { handleEvent(JSON.parse(line.slice(5).trim())); } catch (e) { /* ignore */ }
+            }
+          }
+        } catch (e) { /* reconnect below */ }
+
+        el("live").style.display = "none";
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+
+    // ---------------- Profile setup ----------------
+    function showProfileForm() {
+      const isCustomer = role === "customer";
+      el("app").innerHTML = `
+        <div class="hero"><h1>Almost there!</h1><p>Complete your profile to start.</p></div>
+        <div class="card">
+          <h2>Your details</h2>
+          <label>Phone (10 digits)</label><input id="f-phone" maxlength="10">
+          ${isCustomer
+            ? `<label>Delivery address</label><input id="f-address">`
+            : `<label>Vehicle type</label><input id="f-vtype" placeholder="Bike, Scooter">
+               <label>Vehicle number</label><input id="f-vnum" placeholder="MH12AB1234">`}
+          <label>City</label><input id="f-city">
+          <label>Pincode (6 digits)</label><input id="f-pin" maxlength="6">
+          <button class="btn full" onclick="saveProfile()">Save and continue</button>
+        </div>`;
+    }
+
+    async function saveProfile() {
+      const data = {
+        phone: el("f-phone").value,
+        city: el("f-city").value,
+        pincode: el("f-pin").value,
+      };
+      let path = "/customers/profile";
+
+      if (role === "customer") {
+        data.address = el("f-address").value;
+      } else {
+        path = "/partners/profile";
+        data.vehicle_type = el("f-vtype").value;
+        data.vehicle_number = el("f-vnum").value;
+      }
+
+      try {
+        await api(path, "POST", data);
+        toast("Profile saved");
+        init();
+      } catch (e) {
+        toast(e.message, "error");
+      }
+    }
+
+    // ---------------- Modal, maps and receipt (shared) ----------------
+    function stopLive() {
+      if (liveMap) {
+        try { liveMap.map.remove(); } catch (e) { /* already gone */ }
+        liveMap = null;
+      }
+    }
+
+    function closeModal() {
+      stopLive();
+      const m = el("modal");
+      if (m) m.remove();
+    }
+
+    function openModal(html, wide) {
+      closeModal();
+      const m = document.createElement("div");
+      m.className = "modal";
+      m.id = "modal";
+      m.innerHTML = `<div class="modal-box ${wide ? "wide" : ""}">${html}</div>`;
+      m.addEventListener("click", (e) => { if (e.target === m) closeModal(); });
+      document.body.appendChild(m);
+    }
+
+    // Pickup and delivery locations on a map
+    // NOTE: positions are estimated from the pincode, not GPS
+    function openMap(id) {
+      const o = ordersCache.find((x) => x.id === id);
+      if (!o) return;
+
+      if (o.pickup_lat == null || o.delivery_lat == null) {
+        toast("Location is not available for this order", "error");
+        return;
+      }
+
+      openModal(`
+        <h2>📍 Delivery route</h2>
+        <p class="muted">${esc(o.order_number)} · ${esc(o.restaurant_name || "Parcel")}</p>
+        <div id="map"></div>
+        <div class="legend">
+          <span>🟢 Pickup: ${esc(o.pickup_address)}</span>
+          <span>🔴 Drop: ${esc(o.delivery_address)}</span>
+        </div>
+        <p><b>${esc(o.distance_km ?? "-")} km</b>
+           ${o.eta_minutes && isOpenOrder(o) ? " · about " + o.eta_minutes + " min" : ""}</p>
+        <p class="muted" style="margin-top:6px">Positions are estimated from the pincode.</p>
+        <button class="btn-ghost full" style="margin-top:12px;width:100%" onclick="closeModal()">Close</button>
+      `, true);
+
+      const a = [o.pickup_lat, o.pickup_lng];
+      const b = [o.delivery_lat, o.delivery_lng];
+      const map = L.map("map");
+
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "© OpenStreetMap",
+      }).addTo(map);
+
+      L.polyline([a, b], { color: "#fc8019", weight: 4, dashArray: "8 8" }).addTo(map);
+      L.circleMarker(a, { radius: 10, color: "#1ba672", fillColor: "#1ba672", fillOpacity: 0.9 })
+        .addTo(map).bindTooltip("Pickup", { permanent: true, direction: "top" });
+      L.circleMarker(b, { radius: 10, color: "#e23744", fillColor: "#e23744", fillOpacity: 0.9 })
+        .addTo(map).bindTooltip("Drop", { permanent: true, direction: "bottom" });
+
+      map.fitBounds([a, b], { padding: [50, 50], maxZoom: 15 });
+      setTimeout(() => map.invalidateSize(), 150);
+    }
+
+    // Live map: the partner moves as GPS positions arrive
+    async function openLive(id) {
+      const o = ordersCache.find((x) => x.id === id);
+      if (!o) return;
+
+      if (o.pickup_lat == null || o.delivery_lat == null) {
+        toast("Location is not available for this order", "error");
+        return;
+      }
+
+      openModal(`
+        <h2>🛰️ Live tracking</h2>
+        <p class="muted">${esc(o.order_number)} · ${esc(o.restaurant_name || "Parcel")}</p>
+        <div id="map"></div>
+        <div class="legend"><span>🟢 Pickup</span><span>🔴 Drop</span><span>🛵 Delivery partner</span></div>
+        <p id="live-info" class="muted">Waiting for the delivery partner's location...</p>
+        <button class="btn-ghost full" style="margin-top:12px;width:100%" onclick="closeModal()">Close</button>
+      `, true);
+
+      const a = [o.pickup_lat, o.pickup_lng];
+      const b = [o.delivery_lat, o.delivery_lng];
+      const map = L.map("map");
+
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "© OpenStreetMap",
+      }).addTo(map);
+
+      L.polyline([a, b], { color: "#fc8019", weight: 4, dashArray: "8 8" }).addTo(map);
+      L.circleMarker(a, { radius: 9, color: "#1ba672", fillColor: "#1ba672", fillOpacity: 0.9 }).addTo(map);
+      L.circleMarker(b, { radius: 9, color: "#e23744", fillColor: "#e23744", fillOpacity: 0.9 }).addTo(map);
+
+      map.fitBounds([a, b], { padding: [50, 50], maxZoom: 15 });
+      setTimeout(() => map.invalidateSize(), 150);
+
+      liveMap = { orderId: id, map: map, marker: null, a: a, b: b };
+
+      try {
+        const d = await api("/live/order/" + id);
+        if (d.location) showRider(d.location);
+        else if (!d.partner_assigned) el("live-info").textContent = "No delivery partner assigned yet.";
+      } catch (e) { /* the map still shows the route */ }
+    }
+
+    function showRider(loc) {
+      if (!liveMap) return;
+
+      const pos = [loc.lat, loc.lng];
+
+      if (!liveMap.marker) {
+        liveMap.marker = L.marker(pos, {
+          icon: L.divIcon({ html: "🛵", className: "rider-icon", iconSize: [30, 30] }),
+        }).addTo(liveMap.map);
+        liveMap.map.fitBounds([liveMap.a, liveMap.b, pos], { padding: [50, 50], maxZoom: 16 });
+      } else {
+        liveMap.marker.setLatLng(pos);
+      }
+
+      const parts = [];
+      if (loc.km_to_drop != null) parts.push("<b>" + loc.km_to_drop + " km</b> from your address");
+      parts.push(loc.simulated ? "simulated GPS (demo)" : "real GPS");
+      const info = el("live-info");
+      if (info) info.innerHTML = parts.join(" · ");
+    }
+
+    function showReceipt(id) {
+      const o = ordersCache.find((x) => x.id === id);
+      if (!o) return;
+
+      const rows = (o.items && o.items.length)
+        ? o.items.map((i) => `
+            <tr><td>${esc(i.item_name)}</td><td>${i.quantity}</td>
+              <td>${money(i.price)}</td><td>${money(parseFloat(i.price) * i.quantity)}</td></tr>`).join("")
+        : `<tr><td colspan="4">${esc(o.package_description || "Parcel delivery")}</td></tr>`;
+
+      openModal(`
+        <div class="receipt">
+          <h2>🍔 LoadShare Food</h2>
+          <p class="center muted">Receipt</p>
+          <p><b>Order:</b> ${esc(o.order_number)}<br>
+             <b>Date:</b> ${new Date(o.created_at).toLocaleString()}<br>
+             <b>Restaurant:</b> ${esc(o.restaurant_name || "Parcel")}<br>
+             <b>Status:</b> ${esc(o.order_status)}</p>
+          <table>
+            <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="bill-row"><span>Item total</span><span>${money(o.items_total)}</span></div>
+          <div class="bill-row"><span>Delivery fee${o.distance_km ? " (" + esc(o.distance_km) + " km)" : ""}</span><span>${money(o.delivery_charge)}</span></div>
+          <div class="bill-row total"><span>Total</span><span>${money(orderTotal(o))}</span></div>
+          <p style="margin-top:10px"><b>Payment:</b> ${esc(o.payment_method || "Not chosen")} · ${esc(o.payment_status)}</p>
+          <p><b>From:</b> ${esc(o.pickup_address)}<br><b>To:</b> ${esc(o.delivery_address)}</p>
+          <p class="center muted" style="margin-top:12px">Thank you for ordering with us!</p>
+          <div class="no-print" style="display:flex;gap:8px;margin-top:14px">
+            <button class="btn full" onclick="window.print()">🖨️ Print</button>
+            <button class="btn-ghost full" onclick="closeModal()">Close</button>
+          </div>
+        </div>
+      `, true);
+    }
+
+    // ======================================================
+    //  CUSTOMER
+    // ======================================================
+    let restaurants = [];
+    let currentRest = null;
+    let menuItems = [];
+    let cart = {};          // menu_item_id -> { item, qty }
+    let cartRestId = null;
+    let myProfile = null;
+    let cuisineFilter = "All";
+    let vegOnly = false;
+    let ratingOnly = false;
+    let upiInfo = null;
+    let ordersTab = "active";
+    let quote = null;
+    let reviewed = {};      // order id -> my rating
+    let rateValue = 0;
+
+    const CATEGORIES = [
+      ["All", "🍽️"], ["North Indian", "🍛"], ["South Indian", "🥞"], ["Biryani", "🍗"],
+      ["Chinese", "🥡"], ["Street Food", "🌯"], ["Pizza", "🍕"], ["Burger", "🍔"],
+      ["Seafood", "🦐"], ["Mughlai", "🍢"], ["Gujarati", "🍽️"], ["Bengali", "🐟"],
+      ["Dessert", "🍰"],
+    ];
+
+    async function renderCustomer() {
+      el("orders-btn").style.display = "inline-flex";
+      myProfile = await api("/customers/profile");
+      el("app").innerHTML = `
+        <div class="hero"><h1>Hungry? Get food in minutes</h1>
+          <p>Delivering to ${esc(myProfile.address)}, ${esc(myProfile.pincode)}</p></div>
+        <div class="card">
+          <div class="grid2">
+            <div><label>City</label>
+              <select id="city-sel" onchange="showRestaurants()"></select></div>
+            <div><label>Pincode (optional)</label>
+              <input id="area-pin" maxlength="6" placeholder="All areas"
+                     oninput="showRestaurants()"></div>
+          </div>
+          <div class="filter-row">
+            <input id="search" placeholder="Search restaurant or cuisine (pizza, biryani...)"
+                   oninput="showRestaurants()">
+            <button class="toggle" id="veg-btn" onclick="toggleVeg()">🟢 Veg only</button>
+            <button class="toggle" id="rate-btn" onclick="toggleRating()">⭐ 4.0+</button>
+          </div>
+          <div class="chips" id="chips"></div>
+        </div>
+        <div class="card" id="browse"></div>
+        <div class="card" id="checkout" style="display:none"></div>
+        <div class="cartbar" id="cartbar" style="display:none"></div>`;
+      restaurants = await api("/restaurants/");
+      fillCities();
+      showRestaurants();
+      loadCustomerOrders();
+    }
+
+    function fillCities() {
+      const cities = [...new Set(restaurants.map((r) => r.city))].sort();
+      const mine = cities.find((c) =>
+        c.toLowerCase() === (myProfile.city || "").toLowerCase());
+      el("city-sel").innerHTML = `<option value="All">All cities</option>` +
+        cities.map((c) => `<option ${c === mine ? "selected" : ""}>${esc(c)}</option>`).join("");
+    }
+
+    function clearFilters() {
+      cuisineFilter = "All";
+      vegOnly = false;
+      ratingOnly = false;
+      el("city-sel").value = "All";
+      el("area-pin").value = "";
+      el("search").value = "";
+      showRestaurants();
+    }
+
+    function setCuisine(name) {
+      cuisineFilter = name;
+      showRestaurants();
+    }
+
+    function toggleVeg() {
+      vegOnly = !vegOnly;
+      if (currentRest) renderMenu();
+      else showRestaurants();
+      el("veg-btn").className = "toggle" + (vegOnly ? " on" : "");
+    }
+
+    function toggleRating() {
+      ratingOnly = !ratingOnly;
+      showRestaurants();
+    }
+
+    function showRestaurants() {
+      currentRest = null;
+      const city = el("city-sel").value;
+      const pin = el("area-pin").value.trim();
+      const text = el("search").value.trim().toLowerCase();
+
+      let list = restaurants.filter((r) =>
+        (city === "All" || r.city === city) && (pin.length < 6 || r.pincode === pin));
+
+      if (text) {
+        list = list.filter((r) =>
+          (r.name + " " + (r.cuisine || "")).toLowerCase().includes(text));
+      }
+      if (cuisineFilter !== "All") {
+        const c = cuisineFilter.toLowerCase();
+        list = list.filter((r) => (r.cuisine || "").toLowerCase().includes(c));
+      }
+      if (ratingOnly) {
+        list = list.filter((r) => r.rating_count && r.rating >= 4);
+      }
+
+      // best rated first
+      list = [...list].sort((a, b) => (b.rating || 0) - (a.rating || 0));
+
+      el("chips").innerHTML = CATEGORIES.map(([name, icon]) =>
+        `<div class="chip ${cuisineFilter === name ? "on" : ""}" onclick="setCuisine('${name}')">
+           <span>${icon}</span>${name}</div>`).join("");
+
+      el("veg-btn").className = "toggle" + (vegOnly ? " on" : "");
+      el("rate-btn").className = "toggle" + (ratingOnly ? " on" : "");
+
+      el("browse").innerHTML = "<h2>" + list.length + " restaurants" +
+        (city !== "All" ? " in " + esc(city) : " across India") + "</h2>" + (list.length
+        ? list.map((r) => `
+          <div class="rest ${r.is_open ? "" : "closed"}" onclick="openRestaurant(${r.id})">
+            ${restImg(r)}
+            <div>
+              <b>${esc(r.name)}</b>
+              <div class="muted">${esc(r.cuisine)} · ${esc(r.city)} ${esc(r.pincode)}</div>
+              <div style="margin-top:4px">${ratingBadge(r)}
+                ${r.is_open ? "" : '<span class="pill cancel">Closed</span>'}</div>
+            </div>
+          </div>`).join("")
+        : `<div class="empty">No restaurants match.<br><br>
+             <button class="btn" onclick="clearFilters()">Clear all filters</button></div>`);
+      el("checkout").style.display = "none";
+    }
+
+    async function openRestaurant(id) {
+      const r = restaurants.find((x) => x.id === id);
+      if (!r.is_open) { toast("This restaurant is closed", "error"); return; }
+      try {
+        menuItems = await api("/restaurants/" + id + "/menu");
+        currentRest = r;
+        renderMenu();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    function renderMenu() {
+      const r = currentRest;
+      el("browse").innerHTML = `
+        <button class="btn-ghost" onclick="showRestaurants()">← All restaurants</button>
+        <h2 style="margin-top:14px">${esc(r.emoji || "")} ${esc(r.name)} ${ratingBadge(r)}</h2>
+        <div class="muted" style="margin-bottom:6px">${esc(r.cuisine)} · ${esc(r.address)}, ${esc(r.city)} ${esc(r.pincode)}</div>
+        ${menuItems.filter((m) => !vegOnly || m.is_veg).map(menuRow).join("") || '<div class="empty">No items yet.</div>'}`;
+      updateCartBar();
+    }
+
+    function menuRow(m) {
+      const q = cart[m.id] ? cart[m.id].qty : 0;
+      let action = `<span class="muted">Unavailable</span>`;
+      if (m.is_available) {
+        action = q
+          ? `<div class="qty"><button onclick="changeQty(${m.id}, -1)">−</button><span>${q}</span><button onclick="changeQty(${m.id}, 1)">+</button></div>`
+          : `<button class="btn-small" onclick="changeQty(${m.id}, 1)">ADD</button>`;
+      }
+      return `
+        <div class="menu-row">
+          <div>
+            <span class="dot ${m.is_veg ? "veg" : "nonveg"}"></span><b>${esc(m.name)}</b>
+            <div class="muted">${esc(m.description || "")}</div>
+            <b>${money(m.price)}</b>
+          </div>
+          ${action}
+        </div>`;
+    }
+
+    function changeQty(id, delta) {
+      const item = menuItems.find((m) => m.id === id);
+
+      if (cartRestId && cartRestId !== currentRest.id && Object.keys(cart).length) {
+        if (!confirm("Your cart has items from another restaurant. Clear it and start a new cart?")) return;
+        cart = {};
+      }
+      cartRestId = currentRest.id;
+
+      const qty = (cart[id] ? cart[id].qty : 0) + delta;
+      if (qty <= 0) delete cart[id];
+      else cart[id] = { item: item, qty: Math.min(qty, 20) };
+
+      if (!Object.keys(cart).length) cartRestId = null;
+
+      renderMenu();
+      if (el("checkout").style.display !== "none") viewCart();
+    }
+
+    function cartTotals() {
+      const lines = Object.values(cart);
+      const count = lines.reduce((s, l) => s + l.qty, 0);
+      const sub = lines.reduce((s, l) => s + parseFloat(l.item.price) * l.qty, 0);
+      return { lines, count, sub };
+    }
+
+    function updateCartBar() {
+      const bar = el("cartbar");
+      const t = cartTotals();
+      if (!t.count) { bar.style.display = "none"; return; }
+      bar.style.display = "flex";
+      bar.innerHTML = `<div><b>${t.count} item${t.count > 1 ? "s" : ""}</b> · ${money(t.sub)}</div>
+        <button onclick="viewCart()">View cart ➜</button>`;
+    }
+
+    function viewCart() {
+      const t = cartTotals();
+      if (!t.count) { el("checkout").style.display = "none"; return; }
+      const rest = restaurants.find((r) => r.id === cartRestId);
+
+      // keep what the customer already typed when the cart is redrawn
+      const keepPin = el("co-pin") ? el("co-pin").value : myProfile.pincode;
+      const keepAddr = el("co-addr") ? el("co-addr").value : myProfile.address;
+
+      el("checkout").style.display = "block";
+      el("checkout").innerHTML = `
+        <h2>Your cart · ${esc(rest.name)}</h2>
+        ${t.lines.map((l) => `
+          <div class="bill-row"><span>${esc(l.item.name)} x ${l.qty}</span>
+            <span>${money(parseFloat(l.item.price) * l.qty)}</span></div>`).join("")}
+        <div class="bill-row"><span>Item total</span><span>${money(t.sub)}</span></div>
+        <div class="bill-row"><span>Delivery fee <small id="trip-info"></small></span>
+          <span id="fee-val">...</span></div>
+        <div class="bill-row total"><span>To pay</span><span id="pay-val">${money(t.sub)}</span></div>
+        <p class="muted" style="margin-top:6px">Delivery fee: Rs 20 for the first 2 km, then Rs 7 per km.</p>
+        <div style="margin-top:14px">
+          <label>Deliver to</label>
+          <input id="co-addr" value="${esc(keepAddr)}">
+          <label>Delivery pincode</label>
+          <input id="co-pin" maxlength="6" value="${esc(keepPin)}" oninput="updateQuote()">
+          <button class="btn full" id="place-btn" onclick="placeOrder()" disabled>Place order</button>
+        </div>`;
+      el("checkout").scrollIntoView({ behavior: "smooth" });
+      updateQuote();
+    }
+
+    // Price the delivery by distance (like Swiggy and Zomato)
+    async function updateQuote() {
+      const t = cartTotals();
+      const pinBox = el("co-pin");
+      if (!pinBox || !t.count) return;
+
+      const pin = pinBox.value.trim();
+      const btn = el("place-btn");
+
+      if (!/^\d{6}$/.test(pin)) {
+        el("fee-val").textContent = "Enter a 6-digit pincode";
+        el("trip-info").textContent = "";
+        el("pay-val").textContent = money(t.sub);
+        btn.disabled = true;
+        quote = null;
+        return;
+      }
+
+      try {
+        const q = await api(
+          `/food-orders/quote?restaurant_id=${cartRestId}&delivery_pincode=${pin}&items=${t.count}`
+        );
+
+        // the customer kept typing, ignore this old answer
+        if (!el("co-pin") || el("co-pin").value.trim() !== pin) return;
+
+        quote = q;
+
+        if (!q.deliverable) {
+          el("fee-val").textContent = "Too far";
+          el("trip-info").textContent = "(" + q.distance_km + " km, max " + q.max_km + " km)";
+          el("pay-val").textContent = money(t.sub);
+          btn.disabled = true;
+          return;
+        }
+
+        el("trip-info").textContent = "(" + q.distance_km + " km · about " + q.eta_minutes + " min)";
+        el("fee-val").textContent = money(q.delivery_fee);
+        el("pay-val").textContent = money(t.sub + q.delivery_fee);
+        btn.disabled = false;
+      } catch (e) {
+        if (el("fee-val")) el("fee-val").textContent = "-";
+        if (btn) btn.disabled = true;
+        toast(e.message, "error");
+      }
+    }
+
+    async function placeOrder() {
+      try {
+        const order = await api("/food-orders/", "POST", {
+          restaurant_id: cartRestId,
+          items: Object.values(cart).map((l) => ({ menu_item_id: l.item.id, quantity: l.qty })),
+          delivery_address: el("co-addr").value,
+          delivery_pincode: el("co-pin").value,
+        });
+        toast("Order placed! Arrives in about " + order.eta_minutes + " min");
+        cart = {};
+        cartRestId = null;
+        quote = null;
+        showRestaurants();
+        updateCartBar();
+        ordersTab = "active";
+        await loadCustomerOrders();
+        openOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    // ---------------- My orders side panel ----------------
+    function openOrders() {
+      el("drawer").classList.add("open");
+      el("drawer-bg").classList.add("open");
+    }
+
+    function toggleOrders() {
+      el("drawer").classList.toggle("open");
+      el("drawer-bg").classList.toggle("open");
+    }
+
+    function setOrdersTab(tab) {
+      ordersTab = tab;
+      renderOrdersDrawer();
+    }
+
+    function customerCard(o) {
+      const cancelled = o.order_status === "Cancelled";
+      const idx = STEPS.indexOf(o.order_status);
+      const isFood = !!o.restaurant_id;
+      const labels = isFood ? FOOD_STEPS : STEPS;
+      const steps = labels.map((s, i) =>
+        `<div class="step ${!cancelled && i <= idx ? "done" : ""}"><i></i><small>${s}</small></div>`
+      ).join("");
+      const canPay = o.payment_status === "Pending" && !cancelled && o.order_status !== "Delivered";
+      const eta = (o.eta_minutes && isOpenOrder(o))
+        ? `<div class="eta">⏱ Arrives in about ${o.eta_minutes} min · ${esc(o.distance_km)} km</div>` : "";
+      const total = orderTotal(o);
+      const onTheWay = ACTIVE_STATUSES.includes(o.order_status);
+
+      let payText = "Payment: " + esc(o.payment_status);
+      if (o.payment_method === "COD" && o.payment_status === "Pending") {
+        payText = "💵 Cash on delivery: pay " + money(total) + " to the partner";
+      } else if (o.payment_status === "Paid") {
+        payText = "✅ Paid" + (o.payment_method ? " by " + esc(o.payment_method) : "");
+      }
+
+      let rateBtn = "";
+      if (o.order_status === "Delivered" && o.restaurant_id) {
+        rateBtn = reviewed[o.id]
+          ? `<span class="rating">★ ${reviewed[o.id]} rated</span>`
+          : `<button class="btn-small" onclick="openRate(${o.id})">⭐ Rate</button>`;
+      }
+
+      return `
+        <div class="order">
+          <div class="order-top">
+            <div><b>${esc(o.restaurant_name || "Parcel")}</b>
+              <div class="muted">${esc(o.order_number)} · ${new Date(o.created_at).toLocaleDateString()}</div>
+              <div class="items-line">${itemsText(o)}</div>${eta}</div>
+            <span class="pill ${pillClass(o.order_status)}">${esc(o.order_status)}</span>
+          </div>
+          <div class="route">
+            <div><small>FROM</small><p>${esc(o.pickup_address)} - ${esc(o.pickup_pincode)}</p></div>
+            <div class="arrow">➜</div>
+            <div><small>TO</small><p>${esc(o.delivery_address)} - ${esc(o.delivery_pincode)}</p></div>
+          </div>
+          ${cancelled ? "" : `<div class="steps">${steps}</div>`}
+          <div class="order-foot">
+            <div><b>${money(total)}</b>
+              <span class="muted"> · ${payText}</span></div>
+            <div class="actions">
+              ${onTheWay ? `<button class="btn-small" onclick="openLive(${o.id})">🛰️ Live tracking</button>` : ""}
+              ${canPay ? `<button class="btn-small" onclick="openUpi(${o.id}, '${esc(o.order_number)}', ${total})">Pay by UPI</button>` : ""}
+              ${canPay && o.payment_method !== "COD" ? `<button class="btn-small" onclick="chooseCod(${o.id})">Cash on delivery</button>` : ""}
+              <button class="btn-small" onclick="track(${o.id})">Track</button>
+              <button class="btn-small" onclick="openMap(${o.id})">📍 Map</button>
+              <button class="btn-small" onclick="showReceipt(${o.id})">🧾 Receipt</button>
+              ${rateBtn}
+              ${o.order_status === "Pending" ? `<button class="btn-small danger" onclick="cancelOrder(${o.id})">Cancel</button>` : ""}
+              <button class="btn-small" onclick="complain(${o.id}, '${esc(o.order_number)}')">Help</button>
+            </div>
+          </div>
+          <div class="timeline" id="tl-${o.id}"></div>
+        </div>`;
+    }
+
+    function renderOrdersDrawer() {
+      const active = ordersCache.filter(isOpenOrder);
+      const past = ordersCache.filter((o) => !isOpenOrder(o));
+
+      const badge = el("orders-count");
+      badge.textContent = active.length;
+      badge.style.display = active.length ? "inline-block" : "none";
+
+      el("tab-active").textContent = "Active (" + active.length + ")";
+      el("tab-past").textContent = "History (" + past.length + ")";
+      el("tab-active").className = ordersTab === "active" ? "on" : "";
+      el("tab-past").className = ordersTab === "past" ? "on" : "";
+
+      const list = ordersTab === "active" ? active : past;
+      el("orders").innerHTML = list.length
+        ? list.map(customerCard).join("")
+        : `<div class="empty">${ordersTab === "active"
+            ? "No active orders. Pick a restaurant and order something tasty."
+            : "No past orders yet."}</div>`;
+      openIds.forEach(showTimeline);
+    }
+
+    async function loadCustomerOrders() {
+      try {
+        const [list, mine] = await Promise.all([
+          api("/orders/?limit=200"),
+          api("/reviews/mine").catch(() => []),
+        ]);
+        ordersCache = list;
+        reviewed = {};
+        mine.forEach((m) => (reviewed[m.order_id] = m.rating));
+        renderOrdersDrawer();
+      } catch (e) { /* ignore refresh errors */ }
+    }
+
+    async function showTimeline(id) {
+      const box = el("tl-" + id);
+      if (!box) return;
+      try {
+        const rows = await api("/tracking/" + id);
+        box.innerHTML = "<ul>" + rows.map((r) =>
+          `<li><b>${esc(r.status)}</b> · ${new Date(r.created_at).toLocaleString()}
+           ${r.note ? `<div class="muted">${esc(r.note)}</div>` : ""}</li>`
+        ).join("") + "</ul>";
+      } catch (e) { box.textContent = e.message; }
+    }
+
+    function track(id) {
+      if (openIds.has(id)) {
+        openIds.delete(id);
+        el("tl-" + id).innerHTML = "";
+      } else {
+        openIds.add(id);
+        showTimeline(id);
+      }
+    }
+
+    // ---------------- Ratings ----------------
+    function openRate(id) {
+      const o = ordersCache.find((x) => x.id === id);
+      if (!o) return;
+      rateValue = 0;
+
+      openModal(`
+        <h2>Rate ${esc(o.restaurant_name)}</h2>
+        <p class="muted">${esc(o.order_number)}</p>
+        <div class="stars" id="stars">
+          ${[1, 2, 3, 4, 5].map((n) => `<span onclick="setStars(${n})">★</span>`).join("")}
+        </div>
+        <textarea id="rv-text" rows="3" maxlength="500" placeholder="How was the food? (optional)"></textarea>
+        <button class="btn full" onclick="submitRate(${id})">Submit review</button>
+        <button class="btn-ghost full" style="margin-top:8px;width:100%" onclick="closeModal()">Cancel</button>
+      `);
+    }
+
+    function setStars(n) {
+      rateValue = n;
+      [...el("stars").children].forEach((s, i) => (s.className = i < n ? "on" : ""));
+    }
+
+    async function submitRate(id) {
+      if (!rateValue) { toast("Pick a star rating", "error"); return; }
+      try {
+        await api("/reviews/", "POST", {
+          order_id: id,
+          rating: rateValue,
+          comment: el("rv-text").value.trim() || null,
+        });
+        closeModal();
+        toast("Thanks for your review!");
+        restaurants = await api("/restaurants/");
+        if (!currentRest) showRestaurants();
+        loadCustomerOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    // ---------------- Payments ----------------
+    async function openUpi(id, number, total) {
+      try {
+        if (!upiInfo) upiInfo = await api("/payments/upi-info");
+      } catch (e) { toast(e.message, "error"); return; }
+
+      if (!upiInfo.upi_id) {
+        toast("UPI is not set up. Add UPI_ID in the .env file.", "error");
+        return;
+      }
+
+      const amount = parseFloat(total).toFixed(2);
+      const link = "upi://pay?pa=" + upiInfo.upi_id +
+        "&pn=" + encodeURIComponent(upiInfo.name) +
+        "&am=" + amount + "&cu=INR&tn=" + encodeURIComponent(number);
+
+      openModal(`
+        <h2>Pay Rs ${amount}</h2>
+        <p class="muted">Scan with any UPI app (GPay, PhonePe, Paytm)</p>
+        <div id="qr" class="qr"></div>
+        <p><b>${esc(upiInfo.upi_id)}</b></p>
+        <a class="btn-small" href="${link}" style="display:inline-block;text-decoration:none">Open UPI app (mobile)</a>
+        <hr style="margin:16px 0;border:none;border-top:1px solid #eee">
+        <label>After paying, enter the 12-digit UPI reference (UTR)</label>
+        <input id="utr" maxlength="12" placeholder="e.g. 412345678901">
+        <button class="btn full" onclick="confirmUpi(${id})">I have paid</button>
+        <button class="btn-ghost full" style="margin-top:8px;width:100%" onclick="closeModal()">Cancel</button>
+      `);
+      new QRCode(el("qr"), { text: link, width: 210, height: 210 });
+    }
+
+    async function confirmUpi(id) {
+      try {
+        await api("/payments/", "POST", {
+          order_id: id,
+          method: "UPI",
+          reference: el("utr").value.trim(),
+        });
+        closeModal();
+        toast("Payment recorded. Thank you!");
+        loadCustomerOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function chooseCod(id) {
+      if (!confirm("Pay in cash to the delivery partner when the order arrives?")) return;
+      try {
+        await api("/payments/", "POST", { order_id: id, method: "COD" });
+        toast("Cash on delivery selected");
+        loadCustomerOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function cancelOrder(id) {
+      if (!confirm("Cancel this order?")) return;
+      try {
+        await api(`/orders/${id}/status`, "PATCH", { order_status: "Cancelled" });
+        toast("Order cancelled");
+        loadCustomerOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function complain(id, number) {
+      const description = prompt("Describe the problem for " + number + " (min 10 characters):");
+      if (!description) return;
+      try {
+        await api("/complaints/", "POST", {
+          order_id: id,
+          subject: "Issue with " + number,
+          description: description,
+        });
+        toast("Complaint sent. Check your email for our reply.");
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    // ======================================================
+    //  DELIVERY PARTNER
+    // ======================================================
+    function renderPartner() {
+      el("app").innerHTML = `
+        <div class="hero"><h1>Your deliveries</h1><p id="p-sub">Loading...</p></div>
+        <div class="grid3">
+          <div class="stat"><small>ACTIVE JOBS</small><b id="s-active">0</b></div>
+          <div class="stat"><small>COMPLETED</small><b id="s-done">0</b></div>
+          <div class="stat"><small>STATUS</small><b id="s-avail" style="font-size:18px">-</b></div>
+          <div class="stat"><small>EARNED TODAY (Rs)</small><b id="s-today">0</b></div>
+          <div class="stat"><small>TOTAL EARNED (Rs)</small><b id="s-earn">0</b></div>
+          <div class="stat"><small>DISTANCE COVERED (km)</small><b id="s-km">0</b></div>
+        </div>
+
+        <div class="card">
+          <h2>📡 Live GPS</h2>
+          <p><span class="gps-dot" id="gps-dot"></span><span id="gps-text">Not sharing</span></p>
+          <p class="muted" style="margin:6px 0 12px">Customers see your position on a map while you have an active order.
+            Use a phone for real GPS. On a laptop, use the demo simulation.</p>
+          <div class="actions">
+            <button class="btn-small" id="gps-btn" onclick="toggleGps()">▶ Start sharing GPS</button>
+            <button class="btn-small" id="sim-btn" onclick="toggleSim()">🧪 Simulate trip (demo)</button>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="card"><h2>Earnings, last 7 days</h2>
+            <div class="chart-box"><canvas id="c-earn"></canvas></div></div>
+          <div class="card"><h2>Active jobs</h2><div id="active"></div></div>
+        </div>
+        <div class="card"><h2>Delivery history</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Date</th><th>Order</th><th>Restaurant</th><th>Distance</th>
+              <th>Earned</th><th>Payment</th><th></th></tr></thead>
+            <tbody id="history"></tbody>
+          </table></div></div>`;
+      gpsUi();
+      loadPartnerOrders();
+    }
+
+    // ---------------- Live GPS (partner) ----------------
+    function gpsUi(text) {
+      if (!el("gps-text")) return;
+      const on = gps.watchId !== null || gps.timer !== null;
+      el("gps-dot").className = "gps-dot" + (on ? " on" : "");
+      el("gps-text").textContent = text || (on ? "Sharing..." : "Not sharing");
+      el("gps-btn").textContent = gps.watchId !== null ? "⏹ Stop sharing GPS" : "▶ Start sharing GPS";
+      el("sim-btn").textContent = gps.timer !== null ? "⏹ Stop simulation" : "🧪 Simulate trip (demo)";
+    }
+
+    async function sendLocation(lat, lng, accuracy, simulated) {
+      try {
+        const r = await api("/live/location", "POST", {
+          lat: lat, lng: lng, accuracy: accuracy, simulated: simulated,
+        });
+        gpsUi((simulated ? "Simulating" : "Sharing real GPS") + " · " + lat.toFixed(4) + ", " +
+          lng.toFixed(4) + " · sent " + new Date().toLocaleTimeString() +
+          " · " + r.orders + " active order(s)");
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    function stopGps() {
+      if (gps.watchId !== null) {
+        navigator.geolocation.clearWatch(gps.watchId);
+        gps.watchId = null;
+      }
+      gpsUi();
+    }
+
+    function stopSim() {
+      if (gps.timer !== null) {
+        clearInterval(gps.timer);
+        gps.timer = null;
+      }
+      gpsUi();
+    }
+
+    function toggleGps() {
+      if (gps.watchId !== null) { stopGps(); return; }
+      if (!navigator.geolocation) { toast("This browser has no GPS", "error"); return; }
+
+      stopSim();
+
+      gps.watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const now = Date.now();
+          if (now - gps.last < 5000) return;      // at most one update every 5 seconds
+          gps.last = now;
+          sendLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, false);
+        },
+        (err) => { toast("GPS error: " + err.message, "error"); stopGps(); },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+      );
+      gpsUi("Waiting for a GPS fix...");
+    }
+
+    // Demo: moves a rider along the route of the first active job
+    function toggleSim() {
+      if (gps.timer !== null) { stopSim(); return; }
+
+      const o = ordersCache.find((x) =>
+        ACTIVE_STATUSES.includes(x.order_status) && x.pickup_lat != null && x.delivery_lat != null);
+
+      if (!o) { toast("No active job to simulate. Get an order assigned first.", "error"); return; }
+
+      stopGps();
+
+      const a = [o.pickup_lat, o.pickup_lng];
+      const b = [o.delivery_lat, o.delivery_lng];
+      const start = [a[0] + 0.012, a[1] - 0.012];
+      const lerp = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+
+      const path = [];
+      for (let i = 0; i <= 10; i++) path.push(lerp(start, a, i / 10));
+      for (let i = 1; i <= 20; i++) path.push(lerp(a, b, i / 20));
+
+      let i = 0;
+      gps.timer = setInterval(() => {
+        if (i >= path.length) { stopSim(); toast("Simulated trip finished"); return; }
+        const p = path[i++];
+        sendLocation(p[0], p[1], null, true);
+      }, 2000);
+
+      gpsUi("Starting simulation...");
+    }
+
+    const NEXT = {
+      "Assigned": ["Picked Up", "Picked up from restaurant"],
+      "Picked Up": ["In Transit", "Out for delivery"],
+      "In Transit": ["Delivered", "Mark delivered"],
+    };
+
+    function partnerCard(o) {
+      const total = orderTotal(o);
+      const isCod = o.payment_method === "COD";
+      const cashDue = isCod && o.payment_status !== "Paid";
+      const next = NEXT[o.order_status];
+
+      let payBox = "";
+      if (cashDue && isOpenOrder(o)) {
+        payBox = `<div class="cashbox">💵 Cash on delivery: collect <b>${money(total)}</b> from the customer</div>`;
+      } else if (isCod && o.payment_status === "Paid") {
+        payBox = `<div class="paidbox">✅ Cash collected: ${money(total)}</div>`;
+      } else if (o.payment_status === "Paid") {
+        payBox = `<div class="paidbox">✅ Paid online. No cash to collect</div>`;
+      }
+
+      let action = "";
+      if (cashDue && o.order_status === "In Transit") {
+        action = `<button class="btn big" onclick="collectCash(${o.id})">💵 Cash collected: ${money(total)}</button>`;
+      } else if (next) {
+        action = `<button class="btn big ${next[0] === "Delivered" ? "green" : ""}"
+          onclick="setStatus(${o.id}, '${next[0]}')">${next[1]}</button>`;
+      }
+
+      return `
+        <div class="order">
+          <div class="order-top">
+            <div><b>${esc(o.restaurant_name || "Parcel")}</b>
+              <div class="muted">${esc(o.order_number)}</div>
+              <div class="items-line">${itemsText(o)}</div>
+              ${o.distance_km ? `<div class="eta">🛵 Trip: ${esc(o.distance_km)} km · about ${esc(o.eta_minutes ?? "-")} min</div>` : ""}</div>
+            <span class="pill ${pillClass(o.order_status)}">${esc(o.order_status)}</span>
+          </div>
+          <div class="route">
+            <div><small>PICK UP</small><p>${esc(o.pickup_address)} - ${esc(o.pickup_pincode)}</p></div>
+            <div class="arrow">➜</div>
+            <div><small>DELIVER TO</small><p>${esc(o.delivery_address)} - ${esc(o.delivery_pincode)}</p></div>
+          </div>
+          <div class="order-foot">
+            <div><b>You earn ${money(o.delivery_charge)}</b>
+              <span class="muted"> · Order value ${money(total)}</span></div>
+            <button class="btn-small" onclick="openMap(${o.id})">📍 Route map</button>
+          </div>
+          ${payBox}
+          ${action ? `<div style="margin-top:12px">${action}</div>` : ""}
+        </div>`;
+    }
+
+    async function loadPartnerOrders() {
+      try {
+        const [list, profile] = await Promise.all([
+          api("/orders/?limit=200"),
+          api("/partners/profile"),
+        ]);
+        ordersCache = list;
+
+        const active = list.filter(isOpenOrder);
+        const done = list.filter((o) => o.order_status === "Delivered")
+          .sort((a, b) => orderDate(b) - orderDate(a));
+
+        const sumFee = (arr) => arr.reduce((s, o) => s + parseFloat(o.delivery_charge), 0);
+        const todayStr = new Date().toDateString();
+        const doneToday = done.filter((o) => orderDate(o).toDateString() === todayStr);
+        const km = done.reduce((s, o) => s + parseFloat(o.distance_km || 0), 0);
+
+        el("p-sub").textContent = profile.city + " · " + profile.vehicle_type +
+          " · " + profile.vehicle_number + " · pincode " + profile.pincode;
+        el("s-active").textContent = active.length;
+        el("s-done").textContent = done.length;
+        el("s-today").textContent = sumFee(doneToday).toFixed(0);
+        el("s-earn").textContent = sumFee(done).toFixed(0);
+        el("s-km").textContent = km.toFixed(1);
+        el("s-avail").textContent = profile.is_available ? "🟢 Available" : "🟠 On a job";
+
+        // earnings chart, last 7 days
+        const days = [];
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          days.push(d);
+        }
+        drawChart("c-earn", {
+          type: "bar",
+          data: {
+            labels: days.map((d) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })),
+            datasets: [{
+              label: "Earned (Rs)",
+              data: days.map((d) => sumFee(done.filter((o) => orderDate(o).toDateString() === d.toDateString()))),
+              backgroundColor: "#1ba672",
+            }],
+          },
+          options: { responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+        });
+
+        el("active").innerHTML = active.length
+          ? active.map(partnerCard).join("")
+          : `<div class="empty">No active jobs. New orders appear here when admin assigns them.</div>`;
+
+        el("history").innerHTML = done.length
+          ? done.map((o) => `
+            <tr>
+              <td>${orderDate(o).toLocaleDateString()}</td>
+              <td>${esc(o.order_number)}</td>
+              <td>${esc(o.restaurant_name || "Parcel")}</td>
+              <td>${esc(o.distance_km ?? "-")} km</td>
+              <td>${money(o.delivery_charge)}</td>
+              <td>${esc(o.payment_method || "-")} · ${esc(o.payment_status)}</td>
+              <td><button class="btn-small" onclick="openMap(${o.id})">📍</button></td>
+            </tr>`).join("")
+          : `<tr><td colspan="7" class="empty">No completed deliveries yet.</td></tr>`;
+      } catch (e) { /* ignore refresh errors */ }
+    }
+
+    async function setStatus(id, status) {
+      try {
+        await api(`/orders/${id}/status`, "PATCH", { order_status: status });
+        toast("Updated: " + status);
+        loadPartnerOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function collectCash(id) {
+      if (!confirm("Confirm you have collected the cash from the customer?")) return;
+      try {
+        await api(`/payments/${id}/collect-cash`, "POST");
+        toast("Cash collected. Now mark the order delivered.");
+        loadPartnerOrders();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    // ======================================================
+    //  ADMIN
+    // ======================================================
+    let adminTab = "overview";
+    let adminData = { orders: [], complaints: [], summary: null, demand: null, insights: null };
+    let trendKind = "daily";
+
+    const A_TABS = [
+      ["overview", "📊 Overview"], ["insights", "📈 Insights"], ["orders", "📋 Orders"],
+      ["restaurants", "🍽️ Restaurants"], ["partners", "🛵 Partners"],
+      ["complaints", "🛟 Complaints"], ["demand", "🔮 Demand forecast"],
+    ];
+
+    const tile = (label, id) =>
+      `<div class="stat"><small>${label}</small><b id="${id}">-</b></div>`;
+
+    const ADMIN_BUILD = {
+      overview: () => `
+        <div class="grid4">
+          ${tile("REVENUE (DELIVERED)", "t-revenue")}${tile("TOTAL ORDERS", "t-orders")}
+          ${tile("ON THE ROAD", "t-active")}${tile("DELIVERED", "t-delivered")}
+        </div>
+        <div class="grid4">
+          ${tile("WAITING FOR PARTNER", "t-pending")}${tile("CANCELLED", "t-cancelled")}
+          ${tile("AVG ORDER VALUE", "t-aov")}${tile("OPEN COMPLAINTS", "t-complaints")}
+        </div>
+        <div class="grid2">
+          <div class="card"><h2>Orders and revenue, last 14 days</h2>
+            <div class="chart-box"><canvas id="c-daily"></canvas></div></div>
+          <div class="card"><h2>Orders by status</h2>
+            <div class="chart-box"><canvas id="c-status"></canvas></div></div>
+          <div class="card"><h2>Top restaurants (orders)</h2>
+            <div class="chart-box"><canvas id="c-rest"></canvas></div></div>
+          <div class="card"><h2>Most ordered dishes</h2>
+            <div class="chart-box"><canvas id="c-items"></canvas></div></div>
+        </div>`,
+
+      insights: () => `
+        <p class="muted" id="i-loading">Loading analytics...</p>
+
+        <div class="card">
+          <div class="head-row"><h2>💰 Revenue trends</h2>
+            <div class="seg">
+              <button id="tr-daily" class="on" onclick="setTrend('daily')">Daily</button>
+              <button id="tr-weekly" onclick="setTrend('weekly')">Weekly</button>
+              <button id="tr-monthly" onclick="setTrend('monthly')">Monthly</button>
+            </div></div>
+          <div class="grid4" id="rev-kpis"></div>
+          <div class="chart-box"><canvas id="c-trend"></canvas></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card"><h2>🔁 Customer retention</h2>
+            <div class="grid2" id="ret-kpis"></div>
+            <div class="chart-box"><canvas id="c-ret"></canvas></div></div>
+          <div class="card"><h2>🧾 Orders per customer</h2>
+            <div class="chart-box"><canvas id="c-dist"></canvas></div></div>
+        </div>
+
+        <div class="card"><h2>🍽️ Restaurant-wise revenue comparison</h2>
+          <div class="chart-box" style="height:320px"><canvas id="c-rrev"></canvas></div>
+          <div class="table-wrap" style="margin-top:14px"><table>
+            <thead><tr><th>Restaurant</th><th>City</th><th>Orders</th><th>Delivered</th>
+              <th>Food sales</th><th>Avg order</th><th>Cancel %</th><th>Rating</th></tr></thead>
+            <tbody id="i-rest"></tbody>
+          </table></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card"><h2>⏰ Peak ordering hours</h2>
+            <div id="i-peaks" style="margin-bottom:8px"></div>
+            <div class="chart-box"><canvas id="c-hours"></canvas></div></div>
+          <div class="card"><h2>📅 Orders by weekday</h2>
+            <div class="chart-box"><canvas id="c-week"></canvas></div></div>
+        </div>
+
+        <div class="card"><h2>🛵 Delivery partner performance</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Partner</th><th>City</th><th>Delivered</th><th>Cancelled</th>
+              <th>Completion</th><th>Avg delivery</th><th>On time</th><th>Distance</th><th>Earned</th></tr></thead>
+            <tbody id="i-partners"></tbody>
+          </table></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card"><h2>❌ Order cancellation rate</h2>
+            <div class="grid2" id="can-kpis"></div>
+            <div class="chart-box"><canvas id="c-can"></canvas></div></div>
+          <div class="card"><h2>🔮 Actual vs predicted demand, by hour</h2>
+            <div class="note" id="ap-note"></div>
+            <div class="chart-box"><canvas id="c-ap"></canvas></div></div>
+        </div>
+
+        <div class="card"><h2>📆 Actual vs predicted orders, last 14 days</h2>
+          <div class="chart-box"><canvas id="c-apd"></canvas></div></div>`,
+
+      orders: () => `
+        <div class="card"><h2>Orders</h2>
+          <div class="filter-row">
+            <input id="o-search" placeholder="Search order number or restaurant" oninput="fillAdmin()">
+            <select id="o-status" onchange="fillAdmin()">
+              <option>All</option>
+              ${["Pending", "Assigned", "Picked Up", "In Transit", "Delivered", "Cancelled"]
+                .map((s) => `<option>${s}</option>`).join("")}
+            </select>
+            <select id="o-pay" onchange="fillAdmin()">
+              <option value="All">All payments</option>
+              <option value="Paid">Paid</option>
+              <option value="Unpaid">Not paid</option>
+            </select>
+          </div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>ID</th><th>Order</th><th>Restaurant</th><th>Pincode</th><th>Trip</th>
+              <th>Total</th><th>Payment</th><th>Status</th><th>Partner</th><th></th></tr></thead>
+            <tbody id="a-orders"></tbody>
+          </table></div>
+        </div>`,
+
+      restaurants: () => `
+        <div class="card"><h2>Restaurant performance</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Restaurant</th><th>City</th><th>Orders</th><th>Delivered</th><th>Food sales</th></tr></thead>
+            <tbody id="a-rperf"></tbody>
+          </table></div></div>
+
+        <div class="card"><h2>Restaurants</h2>
+          <div id="a-rests"></div>
+
+          <h2 style="margin-top:20px">Add restaurant</h2>
+          <div class="grid2">
+            <div><label>Name</label><input id="r-name"></div>
+            <div><label>Cuisine</label><input id="r-cuisine" placeholder="Pizza, Italian"></div>
+            <div><label>Emoji</label><input id="r-emoji" value="🍽️"></div>
+            <div><label>Photo URL (optional)</label><input id="r-img" placeholder="https://..."></div>
+            <div><label>Address</label><input id="r-addr"></div>
+            <div><label>City</label><input id="r-city" value="Pune"></div>
+            <div><label>Pincode</label><input id="r-pin" maxlength="6"></div>
+          </div>
+          <button class="btn" onclick="addRestaurant()">Add restaurant</button>
+
+          <h2 style="margin-top:24px">Add menu item</h2>
+          <div class="grid2">
+            <div><label>Restaurant</label><select id="m-rest"></select></div>
+            <div><label>Item name</label><input id="m-name"></div>
+            <div><label>Description</label><input id="m-desc"></div>
+            <div><label>Price (Rs)</label><input id="m-price" type="number"></div>
+            <div><label>Type</label>
+              <select id="m-veg"><option value="true">Veg</option><option value="false">Non-veg</option></select></div>
+          </div>
+          <button class="btn" onclick="addMenuItem()">Add item</button>
+        </div>`,
+
+      partners: () => `
+        <div class="card"><h2>Delivery partners</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Partner</th><th>City · vehicle</th><th>Status</th><th>Delivered</th>
+              <th>Active</th><th>Earned</th><th>Avg trip</th></tr></thead>
+            <tbody id="a-partners"></tbody>
+          </table></div></div>`,
+
+      complaints: () => `<div class="card"><h2>Complaints</h2><div id="a-complaints"></div></div>`,
+
+      demand: () => `
+        <div class="card"><h2>🔮 Demand forecast, next 24 hours</h2>
+          <p class="muted" style="margin-bottom:10px">Demand index: 100 = the busiest hour of the week.
+            The model is trained on synthetic hourly patterns.</p>
+          <div style="margin-bottom:6px"><b>Expected peak hours:</b></div>
+          <div id="d-peaks"></div>
+          <div class="chart-box"><canvas id="c-demand"></canvas></div></div>
+        <div class="grid2">
+          <div class="card"><h2>Actual orders by hour of day</h2>
+            <div class="chart-box"><canvas id="c-hourly"></canvas></div></div>
+          <div class="card"><h2>Popular dishes (stock these first)</h2>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Dish</th><th>Restaurant</th><th>Qty</th><th>Share</th></tr></thead>
+              <tbody id="d-items"></tbody>
+            </table></div></div>
+        </div>`,
+    };
+
+    function growthText(p) {
+      if (p === null || p === undefined) return "";
+      return (p >= 0 ? "▲ " : "▼ ") + Math.abs(p) + "% vs last week";
+    }
+
+    function drawTrend() {
+      const d = adminData.insights;
+      if (!d || !el("c-trend")) return;
+
+      ["daily", "weekly", "monthly"].forEach((k) => {
+        const b = el("tr-" + k);
+        if (b) b.className = k === trendKind ? "on" : "";
+      });
+
+      const rows = d.revenue[trendKind];
+      drawChart("c-trend", {
+        type: "bar",
+        data: {
+          labels: rows.map((r) => r.label),
+          datasets: [
+            { type: "line", label: "Revenue (Rs)", data: rows.map((r) => r.revenue),
+              borderColor: "#1ba672", backgroundColor: "#1ba672", tension: 0.3, yAxisID: "y1" },
+            { type: "bar", label: "Orders", data: rows.map((r) => r.orders),
+              backgroundColor: "#fc8019", yAxisID: "y" },
+          ],
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 } },
+          y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false } },
+        } },
+      });
+    }
+
+    function setTrend(kind) {
+      trendKind = kind;
+      drawTrend();
+    }
+
+    const ADMIN_FILL = {
+      overview: () => {
+        const s = adminData.summary, t = s.totals;
+        el("t-revenue").textContent = "Rs " + Number(t.revenue).toFixed(0);
+        el("t-orders").textContent = t.orders;
+        el("t-active").textContent = t.active;
+        el("t-delivered").textContent = t.delivered;
+        el("t-pending").textContent = t.pending;
+        el("t-cancelled").textContent = t.cancelled;
+        el("t-aov").textContent = "Rs " + Number(t.avg_order_value).toFixed(0);
+        el("t-complaints").textContent = t.open_complaints;
+
+        const plain = { responsive: true, maintainAspectRatio: false };
+
+        drawChart("c-daily", {
+          type: "bar",
+          data: {
+            labels: s.daily.map((d) => d.date),
+            datasets: [
+              { type: "bar", label: "Orders", data: s.daily.map((d) => d.orders),
+                backgroundColor: "#fc8019", yAxisID: "y" },
+              { type: "line", label: "Revenue (Rs)", data: s.daily.map((d) => d.revenue),
+                borderColor: "#1ba672", backgroundColor: "#1ba672", tension: 0.3, yAxisID: "y1" },
+            ],
+          },
+          options: { ...plain, scales: {
+            y: { beginAtZero: true, ticks: { precision: 0 } },
+            y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false } },
+          } },
+        });
+
+        const statuses = Object.keys(s.by_status);
+        drawChart("c-status", {
+          type: "doughnut",
+          data: {
+            labels: statuses,
+            datasets: [{ data: statuses.map((k) => s.by_status[k]),
+              backgroundColor: statuses.map((k) => STATUS_COLORS[k]) }],
+          },
+          options: plain,
+        });
+
+        drawChart("c-rest", {
+          type: "bar",
+          data: {
+            labels: s.restaurants.map((r) => r.name),
+            datasets: [{ label: "Orders", data: s.restaurants.map((r) => r.orders),
+              backgroundColor: "#2f6fed" }],
+          },
+          options: { ...plain, indexAxis: "y", plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } },
+        });
+
+        drawChart("c-items", {
+          type: "bar",
+          data: {
+            labels: s.top_items.map((i) => i.name),
+            datasets: [{ label: "Quantity", data: s.top_items.map((i) => i.qty),
+              backgroundColor: "#7c5cff" }],
+          },
+          options: { ...plain, plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+        });
+      },
+
+      insights: () => {
+        const d = adminData.insights;
+        const plain = { responsive: true, maintainAspectRatio: false };
+        const loading = el("i-loading");
+        if (loading) loading.style.display = "none";
+
+        // 1. revenue trends
+        const rv = d.revenue.totals;
+        el("rev-kpis").innerHTML =
+          kpi("TODAY", "Rs " + rv.today.toFixed(0)) +
+          kpi("THIS WEEK", "Rs " + rv.week.toFixed(0), growthText(rv.week_growth_pct)) +
+          kpi("THIS MONTH", "Rs " + rv.month.toFixed(0)) +
+          kpi("ALL TIME", "Rs " + rv.all_time.toFixed(0));
+        drawTrend();
+
+        // 2. customer retention
+        const rt = d.retention;
+        el("ret-kpis").innerHTML =
+          kpi("CUSTOMERS", rt.customers) +
+          kpi("REPEAT CUSTOMERS", rt.repeat_customers, rt.repeat_rate + "% repeat rate") +
+          kpi("30-DAY RETENTION", rt.retention_30d === null ? "-" : rt.retention_30d + "%",
+              rt.eligible_30d + " customers old enough") +
+          kpi("NEW THIS MONTH", rt.monthly[rt.monthly.length - 1].new);
+
+        drawChart("c-ret", {
+          type: "bar",
+          data: {
+            labels: rt.monthly.map((m) => m.label),
+            datasets: [
+              { label: "New customers", data: rt.monthly.map((m) => m.new), backgroundColor: "#fc8019" },
+              { label: "Returning", data: rt.monthly.map((m) => m.returning), backgroundColor: "#2f6fed" },
+            ],
+          },
+          options: { ...plain, scales: {
+            x: { stacked: true },
+            y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+          } },
+        });
+
+        drawChart("c-dist", {
+          type: "doughnut",
+          data: {
+            labels: Object.keys(rt.distribution),
+            datasets: [{ data: Object.values(rt.distribution),
+              backgroundColor: ["#d4d5d9", "#fc8019", "#2f6fed", "#1ba672"] }],
+          },
+          options: plain,
+        });
+
+        // 3. restaurant-wise revenue
+        const rr = d.restaurants.slice(0, 10);
+        drawChart("c-rrev", {
+          type: "bar",
+          data: {
+            labels: rr.map((r) => r.name),
+            datasets: [{ label: "Food sales (Rs)", data: rr.map((r) => r.sales), backgroundColor: "#1ba672" }],
+          },
+          options: { ...plain, indexAxis: "y", plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true } } },
+        });
+
+        el("i-rest").innerHTML = d.restaurants.length ? d.restaurants.map((r) => `
+          <tr><td>${esc(r.name)}</td><td>${esc(r.city)}</td><td>${r.orders}</td><td>${r.delivered}</td>
+            <td>${money(r.sales)}</td><td>${money(r.avg_order_value)}</td><td>${r.cancel_rate}%</td>
+            <td>${r.rating_count ? "★ " + r.rating + " (" + r.rating_count + ")" : "-"}</td></tr>`).join("")
+          : `<tr><td colspan="8" class="empty">No restaurant orders yet.</td></tr>`;
+
+        // 4. peak hours
+        const ph = d.peak_hours;
+        el("i-peaks").innerHTML = ph.top.length
+          ? ph.top.map((h) => `<span class="pk">${esc(h)}</span>`).join("")
+          : `<span class="muted">No orders yet.</span>`;
+
+        drawChart("c-hours", {
+          type: "bar",
+          data: {
+            labels: d.demand_compare.hour_labels,
+            datasets: [{ label: "Orders", data: ph.by_hour, backgroundColor: "#fc8019" }],
+          },
+          options: { ...plain, plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+        });
+
+        drawChart("c-week", {
+          type: "bar",
+          data: {
+            labels: ph.weekday_labels,
+            datasets: [{ label: "Orders", data: ph.by_weekday, backgroundColor: "#7c5cff" }],
+          },
+          options: { ...plain, plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+        });
+
+        // 5. delivery partner performance
+        el("i-partners").innerHTML = d.partners.length ? d.partners.map((p) => `
+          <tr><td>${esc(p.name)}</td><td>${esc(p.city)}</td><td>${p.delivered}</td><td>${p.cancelled}</td>
+            <td>${p.completion_rate === null ? "-" : p.completion_rate + "%"}</td>
+            <td>${p.avg_delivery_min === null ? "-" : p.avg_delivery_min + " min"}</td>
+            <td>${p.on_time_pct === null ? "-" : p.on_time_pct + "%"}</td>
+            <td>${p.total_km} km</td><td>${money(p.earnings)}</td></tr>`).join("")
+          : `<tr><td colspan="9" class="empty">No delivery partners yet.</td></tr>`;
+
+        // 6. cancellation rate
+        const cn = d.cancellation;
+        el("can-kpis").innerHTML =
+          kpi("CANCELLATION RATE", cn.rate + "%", cn.cancelled + " of " + cn.total_orders + " orders") +
+          kpi("BEFORE ASSIGNMENT", cn.before_assignment, "no partner was involved") +
+          kpi("AFTER ASSIGNMENT", cn.after_assignment, "a partner had been assigned");
+
+        drawChart("c-can", {
+          type: "line",
+          data: {
+            labels: cn.daily.map((x) => x.label),
+            datasets: [{ label: "Cancellation rate (%)", data: cn.daily.map((x) => x.rate),
+              borderColor: "#e23744", backgroundColor: "rgba(226,55,68,0.15)", fill: true, tension: 0.3 }],
+          },
+          options: { ...plain, scales: { y: { beginAtZero: true } } },
+        });
+
+        // 7. actual vs predicted demand
+        const dc = d.demand_compare;
+        el("ap-note").textContent = dc.correlation === null
+          ? "Place at least 5 orders to compare. Predicted demand comes from a model trained on synthetic data."
+          : "Based on " + dc.orders_used + " orders. Shape match (correlation): " + dc.correlation +
+            ". Predicted demand comes from a model trained on synthetic data, shown as a share of the day.";
+
+        drawChart("c-ap", {
+          type: "line",
+          data: {
+            labels: dc.hour_labels,
+            datasets: [
+              { label: "Actual (% of orders)", data: dc.actual_share, borderColor: "#fc8019",
+                backgroundColor: "#fc8019", tension: 0.3 },
+              { label: "Predicted (% of orders)", data: dc.predicted_share, borderColor: "#2f6fed",
+                backgroundColor: "#2f6fed", borderDash: [6, 4], tension: 0.3 },
+            ],
+          },
+          options: { ...plain, scales: { y: { beginAtZero: true } } },
+        });
+
+        drawChart("c-apd", {
+          type: "bar",
+          data: {
+            labels: dc.day_labels,
+            datasets: [
+              { type: "bar", label: "Actual orders", data: dc.actual_daily, backgroundColor: "#fc8019" },
+              { type: "line", label: "Predicted (scaled to your volume)", data: dc.predicted_daily,
+                borderColor: "#2f6fed", backgroundColor: "#2f6fed", tension: 0.3 },
+            ],
+          },
+          options: { ...plain, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+        });
+      },
+
+      orders: () => {
+        const q = el("o-search").value.trim().toLowerCase();
+        const st = el("o-status").value;
+        const pay = el("o-pay").value;
+
+        const rows = adminData.orders.filter((o) =>
+          (st === "All" || o.order_status === st) &&
+          (pay === "All" || (pay === "Paid" ? o.payment_status === "Paid" : o.payment_status !== "Paid")) &&
+          (!q || (o.order_number + " " + (o.restaurant_name || "")).toLowerCase().includes(q)));
+
+        el("a-orders").innerHTML = rows.length ? rows.map((o) => `
+          <tr>
+            <td>${o.id}</td>
+            <td>${esc(o.order_number)}</td>
+            <td>${esc(o.restaurant_name || "Parcel")}</td>
+            <td>${esc(o.pickup_pincode)} → ${esc(o.delivery_pincode)}</td>
+            <td>${o.distance_km ?? "-"} km · ${o.eta_minutes ?? "-"} min</td>
+            <td>${money(orderTotal(o))}</td>
+            <td>${esc(o.payment_method || "-")} · ${esc(o.payment_status)}</td>
+            <td><span class="pill ${pillClass(o.order_status)}">${esc(o.order_status)}</span></td>
+            <td>${o.delivery_partner_id ?? "-"}</td>
+            <td>
+              <button class="btn-small" onclick="openMap(${o.id})">📍</button>
+              ${ACTIVE_STATUSES.includes(o.order_status)
+                ? `<button class="btn-small" onclick="openLive(${o.id})">🛰️ Live</button>` : ""}
+              ${o.order_status === "Pending"
+                ? `<button class="btn-small" onclick="assign(${o.id})">Assign nearest</button>` : ""}
+            </td>
+          </tr>`).join("")
+          : `<tr><td colspan="10" class="empty">No orders match.</td></tr>`;
+      },
+
+      restaurants: () => {
+        const rows = adminData.summary.all_restaurants;
+        el("a-rperf").innerHTML = rows.length ? rows.map((r) => `
+          <tr><td>${esc(r.name)}</td><td>${esc(r.city)}</td><td>${r.orders}</td>
+            <td>${r.delivered}</td><td>${money(r.revenue)}</td></tr>`).join("")
+          : `<tr><td colspan="5" class="empty">No orders yet.</td></tr>`;
+      },
+
+      partners: () => {
+        const rows = adminData.summary.partners;
+        el("a-partners").innerHTML = rows.length ? rows.map((p) => `
+          <tr>
+            <td>${esc(p.name)}</td>
+            <td>${esc(p.city)} · ${esc(p.vehicle)}</td>
+            <td><span class="pill ${p.available ? "done" : "active"}">${p.available ? "Available" : "On a job"}</span></td>
+            <td>${p.delivered}</td><td>${p.active}</td>
+            <td>${money(p.earnings)}</td><td>${p.avg_km} km</td>
+          </tr>`).join("")
+          : `<tr><td colspan="7" class="empty">No delivery partners yet.</td></tr>`;
+      },
+
+      complaints: () => {
+        const list = adminData.complaints;
+        el("a-complaints").innerHTML = list.length ? list.map((c) => `
+          <div class="order">
+            <div class="order-top">
+              <div><b>${esc(c.subject)}</b>
+                <div class="muted">Order id: ${c.order_id ?? "-"} · ${new Date(c.created_at).toLocaleString()}</div></div>
+              <select onchange="setComplaint(${c.id}, this.value)" style="width:auto">
+                ${["Open", "In Progress", "Resolved"].map((s) =>
+                  `<option ${s === c.status ? "selected" : ""}>${s}</option>`).join("")}
+              </select>
+            </div>
+            <p style="margin-top:8px">${esc(c.description)}</p>
+          </div>`).join("")
+          : `<div class="empty">No complaints.</div>`;
+      },
+
+      demand: () => {
+        const d = adminData.demand;
+        const plain = { responsive: true, maintainAspectRatio: false };
+
+        el("d-peaks").innerHTML = d.peak_hours.map((p) => `<span class="pk">${esc(p)}</span>`).join("");
+
+        drawChart("c-demand", {
+          type: "line",
+          data: {
+            labels: d.forecast.map((f) => f.label),
+            datasets: [{ label: "Demand index (0-100)", data: d.forecast.map((f) => f.index),
+              borderColor: "#fc8019", backgroundColor: "rgba(252,128,25,0.15)",
+              fill: true, tension: 0.35 }],
+          },
+          options: { ...plain, scales: { y: { beginAtZero: true, max: 100 } } },
+        });
+
+        drawChart("c-hourly", {
+          type: "bar",
+          data: {
+            labels: d.actual_by_hour.map((_, h) => h + ":00"),
+            datasets: [{ label: "Actual orders", data: d.actual_by_hour, backgroundColor: "#1ba672" }],
+          },
+          options: { ...plain, plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+        });
+
+        el("d-items").innerHTML = d.items.length ? d.items.map((i) => `
+          <tr><td>${esc(i.name)}</td><td>${esc(i.restaurant)}</td><td>${i.qty}</td>
+            <td><div class="bar"><i style="width:${Math.min(100, i.share * 2)}%"></i></div>${i.share}%</td></tr>`).join("")
+          : `<tr><td colspan="4" class="empty">No orders yet. Popular dishes appear after customers order.</td></tr>`;
+      },
+    };
+
+    function renderAdmin() {
+      el("app").innerHTML = `
+        <div class="hero"><h1>Control room</h1>
+          <p>Analytics, orders, restaurants, partners, complaints and demand forecast.</p></div>
+        <div class="atabs" id="atabs"></div>
+        <div id="a-body"></div>`;
+      switchAdminTab("overview");
+      loadAdmin();
+    }
+
+    function switchAdminTab(tab) {
+      adminTab = tab;
+      el("atabs").innerHTML = A_TABS.map(([k, label]) =>
+        `<button class="${k === tab ? "on" : ""}" onclick="switchAdminTab('${k}')">${label}</button>`).join("");
+      el("a-body").innerHTML = ADMIN_BUILD[tab]();
+      if (tab === "restaurants") loadRests();
+      if (tab === "insights") loadInsights();
+      fillAdmin();
+    }
+
+    function fillAdmin() {
+      if (adminTab === "insights") {
+        if (adminData.insights) ADMIN_FILL.insights();
+        return;
+      }
+      if (!adminData.summary) return;
+      ADMIN_FILL[adminTab]();
+    }
+
+    async function loadInsights() {
+      try {
+        adminData.insights = await api("/analytics/insights");
+        if (adminTab === "insights") fillAdmin();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function loadAdmin() {
+      try {
+        const [orders, complaints, summary, demand] = await Promise.all([
+          api("/orders/?limit=500"),
+          api("/complaints/"),
+          api("/analytics/summary"),
+          api("/analytics/demand"),
+        ]);
+        adminData.orders = orders;
+        adminData.complaints = complaints;
+        adminData.summary = summary;
+        adminData.demand = demand;
+        ordersCache = orders;
+        fillAdmin();
+      } catch (e) { /* ignore refresh errors */ }
+    }
+
+    async function loadRests() {
+      try {
+        const list = await api("/restaurants/");
+        el("a-rests").innerHTML = list.length
+          ? list.map((r) => `<div class="rest" style="cursor:default">
+              ${restImg(r)}
+              <div><b>${esc(r.name)}</b>
+                <div class="muted">${esc(r.cuisine)} · ${esc(r.address)}, ${esc(r.city)} ${esc(r.pincode)}</div>
+                <div style="margin-top:4px">${ratingBadge(r)}</div></div></div>`).join("")
+          : `<div class="empty">No restaurants yet.</div>`;
+        el("m-rest").innerHTML = list.map((r) =>
+          `<option value="${r.id}">${esc(r.name)} (${esc(r.city)})</option>`).join("");
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function addRestaurant() {
+      try {
+        await api("/restaurants/", "POST", {
+          name: el("r-name").value,
+          cuisine: el("r-cuisine").value,
+          emoji: el("r-emoji").value,
+          image_url: el("r-img").value.trim() || null,
+          address: el("r-addr").value,
+          city: el("r-city").value,
+          pincode: el("r-pin").value,
+        });
+        toast("Restaurant added");
+        ["r-name", "r-cuisine", "r-img", "r-addr", "r-pin"].forEach((id) => (el(id).value = ""));
+        loadRests();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function addMenuItem() {
+      try {
+        await api("/restaurants/" + el("m-rest").value + "/menu", "POST", {
+          name: el("m-name").value,
+          description: el("m-desc").value,
+          price: el("m-price").value,
+          is_veg: el("m-veg").value === "true",
+        });
+        toast("Menu item added");
+        ["m-name", "m-desc", "m-price"].forEach((id) => (el(id).value = ""));
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function assign(id) {
+      try {
+        await api(`/orders/${id}/assign`, "POST");
+        toast("Nearest partner assigned");
+        loadAdmin();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function setComplaint(id, status) {
+      try {
+        await api(`/complaints/${id}/status`, "PATCH", { status: status });
+        toast("Complaint " + status);
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    // ======================================================
+    //  CHAT
+    // ======================================================
+    function toggleChat() {
+      el("chat").classList.toggle("open");
+      if (!el("chat-box").children.length) {
+        addBubble("Hi! Ask me about charges, refunds, rules or your order number.", "bot");
+      }
+    }
+
+    function addBubble(text, type) {
+      const div = document.createElement("div");
+      div.className = "bubble " + type;
+      div.textContent = text;
+      el("chat-box").appendChild(div);
+      el("chat-box").scrollTop = el("chat-box").scrollHeight;
+      return div;
+    }
+
+    async function sendChat() {
+      const input = el("question");
+      const question = input.value.trim();
+      if (question.length < 2) return;
+
+      addBubble(question, "user");
+      input.value = "";
+      const waiting = addBubble("Typing...", "bot");
+
+      try {
+        const data = await api("/chatbot/", "POST", { question: question });
+        waiting.textContent = data.answer.replace(/\*\*/g, "");
+      } catch (e) {
+        waiting.textContent = "Error: " + e.message;
+      }
+    }
+
+    init();
+  </script>
+
+</body>
+</html>

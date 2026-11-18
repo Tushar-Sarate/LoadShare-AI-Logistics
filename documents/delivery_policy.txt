@@ -1,0 +1,50 @@
+LoadShare Food - Delivery Policy
+
+Delivery Charges for Food Orders
+The delivery fee depends on the distance between the restaurant and the delivery address.
+The first 2 km cost a flat Rs 20.
+After 2 km, Rs 7 is added for every extra km.
+Example: a 1 km trip costs Rs 20. A 5 km trip costs Rs 41. A 10 km trip costs Rs 76.
+The delivery fee is shown in the cart before the order is placed. The food price is charged separately.
+The maximum delivery distance for food orders is 25 km.
+
+Delivery Charges for Parcels
+The parcel delivery charge is Rs 30 for the first 2 km, plus Rs 9 for every extra km, plus Rs 5 per kg of package weight.
+Example: a 2 kg parcel travelling 12 km costs Rs 30 + Rs 90 + Rs 10 = Rs 130.
+Maximum parcel weight is 50 kg.
+
+Estimated Delivery Time
+Every order shows an estimated arrival time in minutes. It depends on the distance, the number of items and the time of day.
+
+Order Status Flow
+An order moves through these statuses in order: Pending, Assigned, Picked Up, In Transit, Delivered.
+An order can also be Cancelled.
+Pending: the order is placed and waiting for a delivery partner.
+Assigned: the nearest available delivery partner has been assigned.
+Picked Up: the partner has collected the order from the restaurant.
+In Transit: the order is on the way to the delivery address.
+Delivered: the order has reached the customer.
+
+Partner Assignment
+Orders are assigned to the nearest available delivery partner within 20 km of the pickup point.
+If a partner is sharing live GPS, the real position is used. Otherwise the position is estimated from the partner's pincode.
+If no partner is available nearby, the order stays Pending until one becomes free.
+
+Live Tracking
+While an order is on the way, the customer can open Live tracking to see the delivery partner on a map, with the distance left to the delivery address.
+The location is shared only while the order is Assigned, Picked Up or In Transit.
+
+Ratings and Reviews
+After an order is delivered, the customer can rate the restaurant from 1 to 5 stars and write a short review. The average rating is shown on the restaurant card.
+
+Delays Due to Weather
+During heavy rain, floods or storms, deliveries may take longer than the estimated time.
+Delivery partners are asked to deliver safely, and a delay caused by weather is not a reason for cancellation after the order is picked up.
+If an order is very late, the customer can raise a complaint and the support team will review it.
+
+Package Rules
+Prohibited parcel items: illegal goods, explosives, flammable liquids and perishable items without proper packing.
+Pickup and delivery addresses must be complete and include a 6-digit pincode.
+
+Tracking
+Customers can view the full status history of an order, with the time of each change, and see the pickup and drop locations on a map.

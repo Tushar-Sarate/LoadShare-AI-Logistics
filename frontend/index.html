@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoadShare Food - Order food online</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .l-nav {
+      position: sticky; top: 0; z-index: 20; background: #fff; display: flex;
+      align-items: center; gap: 24px; padding: 14px 6vw;
+      box-shadow: 0 2px 8px rgba(40, 44, 63, 0.08);
+    }
+    .l-logo { font-size: 24px; font-weight: 800; color: var(--brand); margin-right: auto; }
+    .l-links a { color: var(--ink); text-decoration: none; font-weight: 600; margin-right: 20px; }
+    .l-links a:hover { color: var(--brand); }
+    .l-auth { display: flex; gap: 10px; }
+    .l-btn {
+      display: inline-block; text-decoration: none; padding: 10px 18px; border-radius: 10px;
+      font-weight: 700; border: 1px solid var(--brand); color: var(--brand); background: #fff;
+    }
+    .l-btn.fill { background: var(--brand); color: #fff; }
+
+    .l-hero {
+      background: linear-gradient(135deg, #fc8019 0%, #ff5e3a 60%, #e23744 100%);
+      color: #fff; padding: 70px 6vw 60px;
+    }
+    .l-hero-in { max-width: 900px; margin: 0 auto; text-align: center; }
+    .l-hero h1 { font-size: 46px; line-height: 1.15; margin-bottom: 14px; }
+    .l-hero p { font-size: 18px; opacity: 0.95; margin-bottom: 26px; }
+    .l-search {
+      display: flex; background: #fff; border-radius: 14px; overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); max-width: 760px; margin: 0 auto;
+    }
+    .l-search select, .l-search input {
+      border: none; margin: 0; border-radius: 0; padding: 18px; font-size: 16px; outline: none;
+    }
+    .l-search select { width: 190px; border-right: 1px solid var(--line); font-weight: 600; }
+    .l-search input { flex: 1; }
+    .l-stats { display: flex; gap: 34px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+    .l-stats div { text-align: center; }
+    .l-stats b { display: block; font-size: 28px; }
+    .l-stats span { opacity: 0.9; font-size: 14px; }
+
+    .l-wrap { max-width: 1150px; margin: 0 auto; padding: 36px 20px 20px; }
+    .l-wrap h2 { font-size: 26px; margin: 34px 0 16px; }
+
+    .l-three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: -10px; }
+    .l-feature {
+      background: #fff; border-radius: 16px; padding: 22px; box-shadow: 0 2px 12px rgba(40, 44, 63, 0.08);
+    }
+    .l-feature span { font-size: 38px; }
+    .l-feature h3 { margin: 8px 0 6px; }
+    .l-feature p { color: var(--muted); font-size: 14px; }
+
+    .l-cuisines { display: flex; gap: 22px; overflow-x: auto; padding: 6px 4px 14px; }
+    .l-cuisine { text-align: center; cursor: pointer; flex: 0 0 auto; width: 96px; }
+    .l-cuisine i {
+      display: grid; place-items: center; width: 92px; height: 92px; border-radius: 50%;
+      background: #fff3e8; font-size: 44px; font-style: normal; border: 3px solid transparent;
+      transition: 0.15s;
+    }
+    .l-cuisine:hover i, .l-cuisine.on i { border-color: var(--brand); transform: scale(1.06); }
+    .l-cuisine b { display: block; margin-top: 8px; font-size: 14px; }
+
+    .l-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+    .l-card {
+      background: #fff; border-radius: 16px; overflow: hidden; cursor: pointer;
+      box-shadow: 0 2px 12px rgba(40, 44, 63, 0.08); transition: 0.15s;
+    }
+    .l-card:hover { transform: translateY(-4px); box-shadow: 0 10px 26px rgba(40, 44, 63, 0.16); }
+    .l-cover {
+      height: 150px; background: linear-gradient(135deg, #fff3e8, #ffe0c2); position: relative;
+      display: grid; place-items: center; font-size: 64px; overflow: hidden;
+    }
+    .l-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .l-body { padding: 14px 16px 16px; }
+    .l-body b { font-size: 17px; }
+    .l-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+    .l-rate {
+      background: #1ba672; color: #fff; border-radius: 6px; padding: 2px 8px;
+      font-size: 13px; font-weight: 700;
+    }
+    .l-rate.new { background: #8a8d99; }
+
+    .l-cities { display: flex; flex-wrap: wrap; gap: 12px; }
+    .l-city {
+      background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 20px;
+      font-weight: 700; cursor: pointer;
+    }
+    .l-city:hover { border-color: var(--brand); color: var(--brand); }
+    .l-city small { display: block; font-weight: 400; margin-top: 2px; }
+
+    .l-banner {
+      display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;
+      background: linear-gradient(135deg, #282c3f, #3d4366); color: #fff;
+      border-radius: 20px; padding: 36px; margin: 50px 0 30px;
+    }
+    .l-banner h2 { margin: 0 0 6px; }
+    .l-foot { background: #282c3f; color: #c8cad6; padding: 40px 6vw; margin-top: 40px; font-size: 14px; }
+    .l-foot b { color: #fff; }
+    .l-empty { color: var(--muted); padding: 30px 0; }
+
+    @media (max-width: 760px) {
+      .l-three { grid-template-columns: 1fr; }
+      .l-hero h1 { font-size: 32px; }
+      .l-search { flex-direction: column; }
+      .l-search select { width: 100%; border-right: none; border-bottom: 1px solid var(--line); }
+      .l-links { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="l-nav">
+    <span class="l-logo">🍔 LoadShare Food</span>
+    <nav class="l-links">
+      <a href="#top-rest">Restaurants</a>
+      <a href="#cities">Cities</a>
+      <a href="#partner">Deliver with us</a>
+    </nav>
+    <div class="l-auth" id="l-auth"></div>
+  </header>
+
+  <section class="l-hero">
+    <div class="l-hero-in">
+      <h1>Discover the best food<br>in your city</h1>
+      <p>Order from local restaurants, track your rider live on a map, and pay by UPI or cash.</p>
+      <div class="l-search">
+        <select id="l-city" onchange="render()"></select>
+        <input id="l-q" placeholder="Search for a restaurant or cuisine" oninput="render()">
+      </div>
+      <div class="l-stats" id="l-stats"></div>
+    </div>
+  </section>
+
+  <main class="l-wrap">
+
+    <section class="l-three">
+      <div class="l-feature"><span>🍛</span><h3>Order food online</h3>
+        <p>Browse restaurants by city and cuisine, filter veg or non-veg, and pay with UPI or cash.</p></div>
+      <div class="l-feature"><span>🛰️</span><h3>Live GPS tracking</h3>
+        <p>Watch your delivery partner move on a map, with the distance and arrival time.</p></div>
+      <div class="l-feature"><span>🤖</span><h3>AI and email support</h3>
+        <p>Ask the assistant, or just email us. Pending orders can be cancelled automatically.</p></div>
+    </section>
+
+    <h2>Inspiration for your first order</h2>
+    <div class="l-cuisines" id="l-cuisines"></div>
+
+    <h2 id="top-rest"><span id="l-title">Top restaurants</span></h2>
+    <div class="l-grid" id="l-grid"></div>
+
+    <h2 id="cities">Popular cities</h2>
+    <div class="l-cities" id="l-cities"></div>
+
+    <section class="l-banner" id="partner">
+      <div>
+        <h2>Deliver with us and earn</h2>
+        <p>Earn Rs 20 for the first 2 km and Rs 7 for every extra km on each delivery.</p>
+      </div>
+      <a class="l-btn fill" href="login.html?tab=signup&role=delivery_partner">Become a delivery partner</a>
+    </section>
+
+  </main>
+
+  <footer class="l-foot">
+    <b>LoadShare Food</b><br>
+    A food and parcel delivery platform with an AI support assistant.<br>
+    Sample restaurants and menus, built as a learning project.
+  </footer>
+
+  <script src="js/app.js"></script>
+  <script>
+    const CUISINES = [
+      ["All", "🍽️"], ["North Indian", "🍛"], ["South Indian", "🥞"], ["Biryani", "🍗"],
+      ["Chinese", "🥡"], ["Street Food", "🌯"], ["Pizza", "🍕"], ["Burger", "🍔"],
+      ["Seafood", "🦐"], ["Mughlai", "🍢"], ["Gujarati", "🍽️"], ["Bengali", "🐟"], ["Dessert", "🍰"],
+    ];
+
+    let all = [];
+    let cuisine = "All";
+    const el = (id) => document.getElementById(id);
+
+    // top-right buttons
+    el("l-auth").innerHTML = getToken()
+      ? `<a class="l-btn fill" href="dashboard.html">Open app</a>`
+      : `<a class="l-btn" href="login.html">Log in</a>
+         <a class="l-btn fill" href="login.html?tab=signup">Sign up</a>`;
+
+    function openApp() {
+      window.location.href = getToken() ? "dashboard.html" : "login.html";
+    }
+
+    function pickCuisine(name) {
+      cuisine = name;
+      render();
+    }
+
+    function pickCity(name) {
+      el("l-city").value = name;
+      render();
+      el("top-rest").scrollIntoView({ behavior: "smooth" });
+    }
+
+    function render() {
+      const city = el("l-city").value;
+      const q = el("l-q").value.trim().toLowerCase();
+
+      let list = all.filter((r) => city === "All" || r.city === city);
+      if (q) list = list.filter((r) => (r.name + " " + (r.cuisine || "")).toLowerCase().includes(q));
+      if (cuisine !== "All") list = list.filter((r) => (r.cuisine || "").toLowerCase().includes(cuisine.toLowerCase()));
+
+      // best rated first
+      list.sort((a, b) => (b.rating || 0) - (a.rating || 0) || a.name.localeCompare(b.name));
+
+      el("l-cuisines").innerHTML = CUISINES.map(([name, icon]) =>
+        `<div class="l-cuisine ${cuisine === name ? "on" : ""}" onclick="pickCuisine('${name}')">
+           <i>${icon}</i><b>${name}</b></div>`).join("");
+
+      el("l-title").textContent = (city === "All" ? "Top restaurants across India" : "Top restaurants in " + city)
+        + " (" + list.length + ")";
+
+      el("l-grid").innerHTML = list.length
+        ? list.slice(0, 24).map((r) => `
+          <div class="l-card" onclick="openApp()">
+            <div class="l-cover">${esc(r.emoji || "🍽️")}
+              ${r.image_url ? `<img src="${esc(r.image_url)}" alt="" onerror="this.remove()">` : ""}</div>
+            <div class="l-body">
+              <b>${esc(r.name)}</b>
+              <div class="l-row">
+                <span class="muted">${esc(r.cuisine)}</span>
+                ${r.rating_count
+                  ? `<span class="l-rate">★ ${r.rating}</span>`
+                  : `<span class="l-rate new">New</span>`}
+              </div>
+              <div class="muted" style="margin-top:6px">${esc(r.city)} · ${esc(r.pincode)}
+                ${r.is_open ? "" : " · Closed"}</div>
+            </div>
+          </div>`).join("")
+        : `<div class="l-empty">No restaurants match. Try another city or cuisine.</div>`;
+    }
+
+    async function load() {
+      try {
+        const [rest, stats] = await Promise.all([
+          fetch("/public/restaurants").then((r) => r.json()),
+          fetch("/public/stats").then((r) => r.json()),
+        ]);
+        all = rest;
+
+        const cities = [...new Set(all.map((r) => r.city))].sort();
+        el("l-city").innerHTML = `<option value="All">All cities</option>` +
+          cities.map((c) => `<option>${esc(c)}</option>`).join("");
+
+        el("l-stats").innerHTML =
+          `<div><b>${stats.restaurants}</b><span>restaurants</span></div>
+           <div><b>${stats.cities}</b><span>cities</span></div>
+           <div><b>${stats.partners}</b><span>delivery partners</span></div>
+           <div><b>${stats.delivered_orders}</b><span>orders delivered</span></div>`;
+
+        el("l-cities").innerHTML = cities.map((c) => {
+          const n = all.filter((r) => r.city === c).length;
+          return `<div class="l-city" onclick="pickCity('${esc(c)}')">${esc(c)}<small>${n} restaurants</small></div>`;
+        }).join("");
+
+        render();
+      } catch (e) {
+        el("l-grid").innerHTML = `<div class="l-empty">Could not load restaurants. Is the server running?</div>`;
+      }
+    }
+
+    load();
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoadShare AI Logistics - Orders</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <nav>
+    <span class="brand">LoadShare AI Logistics</span>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="orders.html">Orders</a>
+    <a href="partners.html">Partners</a>
+    <a href="customers.html">Customers</a>
+    <a href="chatbot.html">Chatbot</a>
+    <a href="#" onclick="logout()">Logout</a>
+  </nav>
+
+  <div class="container">
+
+    <div class="card">
+      <h2>Create Order</h2>
+      <input type="text" id="pickup-address" placeholder="Pickup address">
+      <input type="text" id="pickup-pincode" placeholder="Pickup pincode (6 digits)">
+      <input type="text" id="delivery-address" placeholder="Delivery address">
+      <input type="text" id="delivery-pincode" placeholder="Delivery pincode (6 digits)">
+      <input type="text" id="package-description" placeholder="Package description">
+      <input type="number" id="weight" placeholder="Weight in kg" step="0.1">
+      <button onclick="createOrder()">Place Order</button>
+      <p class="msg" id="order-msg"></p>
+    </div>
+
+    <div class="card">
+      <h2>My Orders</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Order No</th>
+            <th>Status</th>
+            <th>Payment</th>
+            <th>Charge (Rs)</th>
+          </tr>
+        </thead>
+        <tbody id="orders-body"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    requireLogin();
+
+    async function loadOrders() {
+      const body = document.getElementById("orders-body");
+      try {
+        const orders = await api("/orders/");
+        body.innerHTML = "";
+        orders.forEach((o) => {
+          body.innerHTML +=
+            "<tr><td>" + o.order_number + "</td><td>" + o.order_status +
+            "</td><td>" + o.payment_status + "</td><td>" + o.delivery_charge + "</td></tr>";
+        });
+      } catch (e) {
+        body.innerHTML = "<tr><td colspan='4'>" + e.message + "</td></tr>";
+      }
+    }
+
+    async function createOrder() {
+      const msg = document.getElementById("order-msg");
+      try {
+        const order = await api("/orders/", "POST", {
+          pickup_address: document.getElementById("pickup-address").value,
+          pickup_pincode: document.getElementById("pickup-pincode").value,
+          delivery_address: document.getElementById("delivery-address").value,
+          delivery_pincode: document.getElementById("delivery-pincode").value,
+          package_description: document.getElementById("package-description").value,
+          weight_kg: document.getElementById("weight").value,
+        });
+        msg.className = "msg success";
+        msg.textContent = "Order placed: " + order.order_number;
+        loadOrders();
+      } catch (e) {
+        msg.className = "msg error";
+        msg.textContent = e.message;
+      }
+    }
+
+    loadOrders();
+  </script>
+
+</body>
+</html>

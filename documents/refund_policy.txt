@@ -1,0 +1,25 @@
+LoadShare Food - Refund Policy
+
+Cancellation
+A customer can cancel an order only while its status is Pending.
+After a partner is assigned, the customer must raise a complaint and the admin can cancel the order.
+Delivered orders cannot be cancelled.
+
+Refund Rules
+If a prepaid order (UPI) is cancelled while Pending, the full amount is refunded, including the delivery fee.
+Cash on Delivery (COD) orders have no refund because no payment is taken before delivery.
+If an order is lost or damaged by the delivery partner, the amount is refunded after the complaint is verified.
+Refunds are approved by the support team. The AI assistant cannot approve a refund.
+
+Refund Time
+Approved refunds are returned to the original payment method within 5 to 7 working days.
+
+Payment Methods
+Accepted methods are UPI and Cash on Delivery.
+A UPI payment is marked Paid when the customer enters the UPI reference number after paying through the QR code.
+For Cash on Delivery, the customer pays cash to the delivery partner. The order is marked Paid when the partner confirms the cash was collected.
+
+Complaints
+Customers can raise a complaint for a late, lost, damaged or wrongly delivered order, in the app or by email.
+Complaint statuses are Open, In Progress and Resolved.
+A request to cancel a Pending order is done automatically. Other complaints are reviewed by the support team, who reply within 24 hours.

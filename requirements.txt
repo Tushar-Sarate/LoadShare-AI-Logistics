@@ -1,0 +1,43 @@
+
+# FastAPI
+fastapi
+uvicorn
+
+# Database
+sqlalchemy
+psycopg2-binary
+
+# Validation and configuration
+pydantic
+pydantic-settings
+python-dotenv
+email-validator
+
+# Authentication and security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# LangChain
+langchain
+langchain-core
+langchain-community
+langchain-groq
+langchain-huggingface
+
+# LangGraph
+langgraph
+
+# RAG and Vector Database
+langchain-chroma
+chromadb
+sentence-transformers
+pypdf
+
+# Machine Learning / Utilities
+faiss-cpu
+requests
+
+# Testing
+pytest
+httpx
